@@ -97,7 +97,9 @@
     .balken > div { height: 100%; width: 0; background: var(--blau); transition: width 0.3s; }
 
     ol#liste { padding-left: 0; list-style: none; margin: 0; }
-    ol#liste li { padding: 8px 0; border-bottom: 1px solid var(--rand); font-size: 16px; }
+    ol#liste li { padding: 10px 0; border-bottom: 1px solid var(--rand); font-size: 16px; cursor: pointer; }
+    ol#liste li .warnung { color: #b26a00; font-weight: 600; font-size: 15px; margin-top: 2px; }
+    @media (prefers-color-scheme: dark) { ol#liste li .warnung { color: #ffb74d; } }
     ol#liste li:last-child { border-bottom: 0; }
     ol#liste li.erledigt { color: var(--grau); text-decoration: line-through; }
     ol#liste li b { display: inline-block; min-width: 2.2em; }
@@ -131,6 +133,7 @@
     <p id="tour-stand" class="klein"></p>
     <button id="knopf-nochmal" class="leise">🔁 Letzte Route nochmal öffnen</button>
     <div class="info">
+      <div class="klein">Adresse falsch? Einfach antippen und ändern.</div>
       <ol id="liste"></ol>
     </div>
     <button id="knopf-neu" class="rot">🗑️ Neue Tour</button>
