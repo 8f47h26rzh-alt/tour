@@ -107,6 +107,56 @@
     ol#liste li:last-child { border-bottom: 0; }
     ol#liste li.erledigt { color: var(--grau); text-decoration: line-through; }
     ol#liste li b { display: inline-block; min-width: 2.2em; }
+
+    /* Prüf-Bildschirm: Fotos mit farbigen Markierungen */
+    .legende { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; margin: 0 0 10px; }
+    .legende span::before {
+      content: ''; display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+      border: 2px solid; margin-right: 5px; vertical-align: -2px;
+    }
+    .legende .ok::before { border-color: #2e7d32; background: rgba(46, 125, 50, 0.25); }
+    .legende .unsicher::before { border-color: #ef6c00; background: rgba(239, 108, 0, 0.3); }
+    .legende .fehlt::before { border-color: #c62828; background: rgba(198, 40, 40, 0.3); }
+    .foto-rahmen {
+      position: relative; margin: 0 0 14px; border-radius: 10px; overflow: hidden;
+      border: 1px solid var(--rand); cursor: crosshair;
+    }
+    .foto-rahmen img { display: block; width: 100%; }
+    .markierung { position: absolute; border: 2px solid; border-radius: 4px; cursor: pointer; }
+    .markierung.ok { border-color: #2e7d32; background: rgba(46, 125, 50, 0.18); }
+    .markierung.unsicher { border-color: #ef6c00; background: rgba(239, 108, 0, 0.25); }
+    .markierung.fehlt { border-color: #c62828; background: rgba(198, 40, 40, 0.28); }
+    .markierung b {
+      position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; line-height: 1; padding: 2px 3px; border-radius: 3px; color: #fff;
+    }
+    .markierung.ok b { background: #2e7d32; }
+    .markierung.unsicher b { background: #ef6c00; }
+    .markierung.fehlt b { background: #c62828; }
+
+    /* Fenster zum Bearbeiten */
+    #dialog {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 10;
+      display: flex; align-items: flex-end; justify-content: center;
+    }
+    #dialog .karte {
+      background: var(--karte); width: 100%; max-width: 520px; max-height: 92vh; overflow-y: auto;
+      border-radius: 18px 18px 0 0; padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+    }
+    #dialog h2 { font-size: 21px; margin: 0 0 10px; }
+    .ausschnitt {
+      overflow-x: auto; border: 1px solid var(--rand); border-radius: 8px; margin: 0 0 6px;
+      background: #fff; -webkit-overflow-scrolling: touch;
+    }
+    .ausschnitt img { display: block; max-width: none; }
+    #dialog label { display: block; font-weight: 600; margin: 12px 0 4px; }
+    #dialog input {
+      width: 100%; font-size: 18px; padding: 12px; border-radius: 10px;
+      border: 2px solid var(--rand); background: var(--hintergrund); color: var(--text);
+    }
+    #dialog input:focus { outline: none; border-color: var(--blau); }
+    #dialog-info { margin: 8px 0 14px; }
+    #dialog button { margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -127,11 +177,28 @@
     <div class="info">
       <div id="lese-text">Lese Fotos …</div>
       <div class="balken"><div id="lese-balken"></div></div>
-      <div class="klein">Beim allerersten Mal dauert es länger, weil die Texterkennung geladen wird (einmalig ca. 15 MB, am besten im WLAN).</div>
+      <div class="klein">Beim allerersten Mal dauert es länger, weil die Texterkennung geladen wird (einmalig ca. 9 MB, am besten im WLAN).</div>
     </div>
   </section>
 
-  <!-- Bildschirm 3: Tour läuft -->
+  <!-- Bildschirm 3: Fotos prüfen -->
+  <section id="seite-pruefen" class="versteckt">
+    <h2 style="margin: 0 0 6px">Bitte kurz prüfen</h2>
+    <p id="pruef-stand" style="margin: 0 0 10px"></p>
+    <div class="legende">
+      <span class="ok">erkannt</span>
+      <span class="unsicher">Straße unklar</span>
+      <span class="fehlt">nicht erkannt</span>
+    </div>
+    <p class="klein" style="margin: 0 0 12px">
+      Farbe antippen = Kunde ändern.<br>
+      Kunde ganz ohne Farbe? Einfach auf seine Zeile im Foto tippen.
+    </p>
+    <div id="pruef-fotos"></div>
+    <button id="knopf-pruefen-fertig" class="gross gruen">✅ Passt – weiter</button>
+  </section>
+
+  <!-- Bildschirm 4: Tour läuft -->
   <section id="seite-tour" class="versteckt">
     <button id="knopf-naechste" class="gross gruen">▶️ Nächste 10 Kunden</button>
     <p id="tour-stand" class="klein"></p>
@@ -140,6 +207,7 @@
       <div class="klein">Adresse falsch? Einfach antippen und ändern.</div>
       <ol id="liste"></ol>
     </div>
+    <button id="knopf-fotos-pruefen" class="leise versteckt">🔍 Fotos prüfen</button>
     <button id="knopf-dazu" class="leise">➕ Fehlenden Kunden hinzufügen</button>
     <button id="knopf-neu" class="rot">🗑️ Neue Tour</button>
     <p id="loesch-info" class="klein"></p>
@@ -147,6 +215,23 @@
 
   <p id="fehler" class="info versteckt" style="color: var(--rot)"></p>
 </main>
+
+<!-- Fenster zum Ändern oder Hinzufügen eines Kunden -->
+<div id="dialog" class="versteckt">
+  <div class="karte">
+    <h2 id="dialog-titel"></h2>
+    <div id="dialog-bild" class="ausschnitt versteckt"><img alt="Ausschnitt aus dem Foto"></div>
+    <div id="dialog-bild-hinweis" class="klein versteckt">↔️ Ausschnitt nach links und rechts wischen, um die ganze Zeile zu sehen.</div>
+    <label for="dialog-pos">Pos.-Nummer</label>
+    <input id="dialog-pos" inputmode="numeric" autocomplete="off" placeholder="z. B. 563">
+    <label for="dialog-adresse">Adresse (Straße Hausnummer, PLZ Ort)</label>
+    <input id="dialog-adresse" autocomplete="off" placeholder="z. B. Lindengasse 4, 3550 Langenlois">
+    <div id="dialog-info" class="klein"></div>
+    <button id="dialog-ok" class="gruen">💾 Speichern</button>
+    <button id="dialog-loeschen" class="rot">🗑️ Kunde löschen</button>
+    <button id="dialog-abbrechen" class="leise">Abbrechen</button>
+  </div>
+</div>
 
 <!-- Texterkennung liegt direkt bei der App, damit kein fremder Server gefragt werden muss -->
 <script src="tesseract/tesseract.min.js"></script>
