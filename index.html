@@ -92,10 +92,23 @@
     .klein { font-size: 15px; color: var(--grau); }
 
     #vorschau { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    #vorschau .vorschau-bild { position: relative; cursor: pointer; }
     #vorschau img {
-      width: 72px; height: 96px; object-fit: cover;
+      display: block; width: 72px; height: 96px; object-fit: cover;
       border-radius: 8px; border: 1px solid var(--rand);
     }
+    #vorschau .vorschau-bild.schlecht img { border: 3px solid #ef6c00; }
+    #vorschau .vorschau-bild span {
+      position: absolute; left: 0; right: 0; bottom: 0; font-size: 11px; font-weight: 700; text-align: center;
+      color: #fff; background: rgba(0, 0, 0, 0.6); border-radius: 0 0 8px 8px; padding: 2px 0;
+    }
+    #vorschau .vorschau-bild.schlecht span { background: #ef6c00; }
+    #foto-warnung { color: #b26a00; font-weight: 600; }
+    @media (prefers-color-scheme: dark) { #foto-warnung { color: #ffb74d; } }
+
+    .schalter { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+    .schalter input { width: 26px; height: 26px; accent-color: var(--gruen); }
+    ol#liste li.uebersprungen { color: var(--grau); }
 
     .balken { height: 18px; background: var(--rand); border-radius: 9px; overflow: hidden; margin: 10px 0; }
     .balken > div { height: 100%; width: 0; background: var(--blau); transition: width 0.3s; }
@@ -170,7 +183,18 @@
     <button id="knopf-foto" class="gross">📷 Foto machen</button>
     <div id="vorschau"></div>
     <p id="foto-zahl" class="klein">Alle Seiten der Tourenübersicht nacheinander fotografieren. Dann „Fertig“ drücken.</p>
+    <p id="foto-warnung" class="versteckt"></p>
     <button id="knopf-fertig" class="gruen" disabled>✅ Fertig</button>
+
+    <div class="info" style="margin-top: 26px">
+      <label class="schalter"><input type="checkbox" id="gedaechtnis-an"> 🧠 Stammkunden merken</label>
+      <p class="klein" style="margin: 8px 0 10px">
+        Die App merkt sich zu jeder Kundennummer die geprüfte Adresse. Ist die Adresse auf dem Foto
+        später unlesbar, reicht die Kundennummer. Gespeichert wird nur Kundennummer und Adresse, ohne Namen
+        und ohne Telefonnummern, und nur auf diesem Handy. Kunden, die 90 Tage nicht vorkommen, werden gelöscht.
+      </p>
+      <button id="knopf-gedaechtnis-loeschen" class="leise" style="margin: 0">Gedächtnis löschen</button>
+    </div>
   </section>
 
   <!-- Bildschirm 2: Texterkennung läuft -->
@@ -190,6 +214,7 @@
       <span class="ok">erkannt</span>
       <span class="unsicher">Straße unklar</span>
       <span class="fehlt">nicht erkannt</span>
+      <span>🧠 = aus dem Gedächtnis</span>
     </div>
     <p class="klein" style="margin: 0 0 12px">
       Farbe antippen = Kunde ändern.<br>
@@ -227,8 +252,13 @@
     <input id="dialog-pos" inputmode="numeric" autocomplete="off" placeholder="z. B. 563">
     <label for="dialog-adresse">Adresse (Straße Hausnummer, PLZ Ort)</label>
     <input id="dialog-adresse" autocomplete="off" placeholder="z. B. Lindengasse 4, 3550 Langenlois">
+    <div id="dialog-nr-feld" class="versteckt">
+      <label for="dialog-nr">Kundennummer (für das Stammkunden-Gedächtnis)</label>
+      <input id="dialog-nr" inputmode="numeric" autocomplete="off" placeholder="z. B. 69158">
+    </div>
     <div id="dialog-info" class="klein"></div>
     <button id="dialog-ok" class="gruen">💾 Speichern</button>
+    <button id="dialog-ueberspringen" class="leise">⏭️ Diesmal überspringen</button>
     <button id="dialog-loeschen" class="rot">🗑️ Kunde löschen</button>
     <button id="dialog-abbrechen" class="leise">Abbrechen</button>
   </div>
