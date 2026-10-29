@@ -12,7 +12,12 @@
 6. **🔁 Letzte Route nochmal öffnen**: Falls Google Maps aus Versehen geschlossen wurde.
 7. **🗑️ Neue Tour**: Löscht alles für den nächsten Tag.
 
-Die Fotos bleiben auf dem Handy. Nur die Adressen gehen an Google Maps.
+## Datenschutz
+
+- Die **Fotos bleiben auf dem Handy**. Die Texterkennung läuft direkt im Handy.
+- Die App spricht mit **keinem fremden Server**. Alles, auch die Texterkennung, kommt von der eigenen Adresse. Eine eingebaute Sperre verhindert, dass Daten woanders hingeschickt werden.
+- Nur beim Routenstart gehen **Straße, PLZ und Ort** an Google Maps. Namen und Telefonnummern werden nicht mitgeschickt.
+- Die Tour wird **automatisch gelöscht**: spätestens 36 Stunden nach dem Fotografieren, oder 6 Stunden nachdem die letzte Route geöffnet wurde. Den genauen Zeitpunkt zeigt die App unten an.
 
 ---
 
@@ -25,6 +30,7 @@ Die Fotos bleiben auf dem Handy. Nur die Adressen gehen an Google Maps.
 | `manifest.json` | Name und Symbol für den Home-Bildschirm |
 | `sw.js` | Damit die App wie eine echte App vom Home-Bildschirm startet |
 | `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` | Das App-Symbol (blaue Kartennadel) |
+| `tesseract/` | Die Texterkennung (Tesseract.js 5.1.1) mit deutscher Sprache |
 
 ---
 
