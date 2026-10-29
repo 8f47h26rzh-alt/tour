@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Tour</title>
 
+  <!-- Sperre: Die App darf nur Dateien von ihrer eigenen Adresse laden und keine Daten
+       an fremde Server schicken. Nur das Öffnen von Google Maps ist erlaubt. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+
   <!-- Damit die App wie eine echte App vom Home-Bildschirm startet -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#1565c0">
@@ -138,12 +142,14 @@
     </div>
     <button id="knopf-dazu" class="leise">➕ Fehlenden Kunden hinzufügen</button>
     <button id="knopf-neu" class="rot">🗑️ Neue Tour</button>
+    <p id="loesch-info" class="klein"></p>
   </section>
 
   <p id="fehler" class="info versteckt" style="color: var(--rot)"></p>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<!-- Texterkennung liegt direkt bei der App, damit kein fremder Server gefragt werden muss -->
+<script src="tesseract/tesseract.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
