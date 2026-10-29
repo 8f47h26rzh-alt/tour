@@ -118,6 +118,46 @@ function adresseAendern(nummer) {
   tourAnzeigen(tour);
 }
 
+// Kunde, den die Texterkennung übersehen hat, von Hand dazunehmen
+function kundeHinzufuegen() {
+  const tour = tourLaden();
+  if (!tour) return;
+
+  const adresse = prompt('Adresse des fehlenden Kunden (Straße Hausnummer, PLZ Ort):', '');
+  if (adresse === null || adresse.trim() === '') return;
+
+  const posText = prompt('Pos.-Nummer von der Liste (z. B. 25).\nUnbekannt? Leer lassen, dann kommt der Kunde ans Ende.', '');
+  if (posText === null) return;
+  const pos = /^\d{1,3}$/.test(posText.trim()) ? Number(posText.trim()) : null;
+
+  const kunde = {
+    pos,
+    adresse: /österreich/i.test(adresse) ? adresse.trim() : adresse.trim() + ', Österreich',
+    unsicher: false,
+  };
+
+  // Passende Stelle nach Pos. suchen
+  let stelle = tour.kunden.length;
+  if (pos !== null) {
+    const naechsterGroesserer = tour.kunden.findIndex((k) => k.pos !== null && k.pos > pos);
+    if (naechsterGroesserer !== -1) stelle = naechsterGroesserer;
+  }
+  // Schon an Google Maps geschickte Kunden bleiben, wie sie sind.
+  // Gehört der neue Kunde eigentlich weiter nach vorne, kommt er in die nächste Route.
+  let hinweis = '';
+  if (stelle < tour.naechste) {
+    stelle = tour.naechste;
+    hinweis = 'Dieser Kunde gehört zu einer Route, die schon offen war. Er kommt deshalb in die nächste Route.';
+  }
+
+  tour.kunden.splice(stelle, 0, kunde);
+  tourSpeichern(tour);
+  tourAnzeigen(tour);
+  if (hinweis) alert(hinweis);
+}
+
+$('knopf-dazu').addEventListener('click', kundeHinzufuegen);
+
 
 // ---------- Fotos machen ----------
 
