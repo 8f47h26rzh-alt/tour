@@ -6,8 +6,9 @@
   <title>Tour</title>
 
   <!-- Sperre: Die App darf nur Dateien von ihrer eigenen Adresse laden und keine Daten
-       an fremde Server schicken. Nur das Öffnen von Google Maps ist erlaubt. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+       an fremde Server schicken. Erlaubt sind nur das Öffnen von Google Maps
+       und die eingebettete Google-Karte zum Prüfen der Route. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self'; frame-src https://maps.google.com https://www.google.com; connect-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 
   <!-- Damit die App wie eine echte App vom Home-Bildschirm startet -->
   <link rel="manifest" href="manifest.json">
@@ -114,7 +115,25 @@
     .balken > div { height: 100%; width: 0; background: var(--blau); transition: width 0.3s; }
 
     ol#liste { padding-left: 0; list-style: none; margin: 0; }
-    ol#liste li { padding: 10px 0; border-bottom: 1px solid var(--rand); font-size: 16px; cursor: pointer; }
+    ol#liste li {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 0; border-bottom: 1px solid var(--rand); font-size: 16px; cursor: pointer;
+    }
+    ol#liste li .kunde-text { flex: 1; min-width: 0; }
+    ol#liste li button.navi {
+      flex: none; width: 52px; height: 52px; margin: 0; padding: 0; font-size: 26px;
+      border-radius: 14px; background: var(--gruen);
+    }
+    ol#liste li.uebersprungen button.navi { background: var(--grau); }
+
+    /* Karte zum Prüfen der Route */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 10px; }
+    .chips button {
+      width: auto; margin: 0; padding: 8px 12px; font-size: 15px; border-radius: 999px;
+      background: transparent; color: var(--blau); border: 2px solid var(--blau);
+    }
+    .chips button.aktiv { background: var(--blau); color: #fff; }
+    #karte { display: block; width: 100%; height: 360px; border: 0; border-radius: 10px; background: var(--rand); }
     ol#liste li .warnung { color: #b26a00; font-weight: 600; font-size: 15px; margin-top: 2px; }
     @media (prefers-color-scheme: dark) { ol#liste li .warnung { color: #ffb74d; } }
     ol#liste li:last-child { border-bottom: 0; }
@@ -229,8 +248,20 @@
     <button id="knopf-naechste" class="gross gruen">▶️ Nächste 10 Kunden</button>
     <p id="tour-stand" class="klein"></p>
     <button id="knopf-nochmal" class="leise">🔁 Letzte Route nochmal öffnen</button>
+
     <div class="info">
-      <div class="klein">Adresse falsch? Einfach antippen und ändern.</div>
+      <button id="knopf-karte" class="leise" style="margin: 0">🗺️ Route auf der Karte prüfen</button>
+      <div id="karte-inhalt" class="versteckt">
+        <div id="karte-auswahl" class="chips"></div>
+        <iframe id="karte" title="Karte mit der Route" referrerpolicy="no-referrer"></iframe>
+        <p class="klein" style="margin: 8px 0 0">
+          So liegen die Kunden in dieser Reihenfolge. Passt etwas nicht, Kunden unten antippen und die Pos. ändern.
+        </p>
+      </div>
+    </div>
+
+    <div class="info">
+      <div class="klein">Adresse falsch? Einfach antippen und ändern. 🧭 = Navigation zu diesem Kunden.</div>
       <ol id="liste"></ol>
     </div>
     <button id="knopf-fotos-pruefen" class="leise versteckt">🔍 Fotos prüfen</button>
