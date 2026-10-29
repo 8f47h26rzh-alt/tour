@@ -4,6 +4,12 @@
 const PRO_ROUTE = 10;            // So viele Kunden schickt die App auf einmal an Google Maps
 const SPEICHER_NAME = 'tour-v1'; // Unter diesem Namen merkt sich das Handy die Tour
 
+// Datenschutz: Die Tour wird automatisch gelöscht ...
+const STUNDE = 60 * 60 * 1000;
+const LOESCHEN_NACH = 36 * STUNDE;        // ... spätestens 36 Stunden nach dem Fotografieren
+                                          //     (die Liste wird oft schon am Vortag fotografiert)
+const LOESCHEN_WENN_FERTIG = 6 * STUNDE;  // ... oder 6 Stunden nachdem die letzte Route geöffnet wurde
+
 let fotos = [];      // Die Fotos, die gerade gemacht wurden
 let worker = null;   // Die Texterkennung (wird erst beim ersten Mal geladen)
 let fortschritt = () => {};
@@ -19,6 +25,30 @@ function tourLaden() {
   } catch (e) {
     return null;
   }
+}
+
+// Wann wird die Tour automatisch gelöscht?
+function loeschZeitpunkt(tour) {
+  let zeit = tour.erstellt + LOESCHEN_NACH;
+  const fertig = tour.naechste >= tour.kunden.length;
+  if (fertig && tour.zuletztGeoeffnet) zeit = Math.min(zeit, tour.zuletztGeoeffnet + LOESCHEN_WENN_FERTIG);
+  return zeit;
+}
+
+// Gespeicherte Tour laden, aber nur, wenn sie noch nicht abgelaufen ist
+function aktuelleTour() {
+  const tour = tourLaden();
+  if (!tour || !tour.kunden || !tour.kunden.length) return null;
+  if (!tour.erstellt) {
+    // Tour aus einer älteren App-Version: ab jetzt mitzählen
+    tour.erstellt = Date.now();
+    tourSpeichern(tour);
+  }
+  if (Date.now() >= loeschZeitpunkt(tour)) {
+    tourSpeichern(null);
+    return null;
+  }
+  return tour;
 }
 
 function tourSpeichern(tour) {
@@ -65,6 +95,11 @@ function tourAnzeigen(tour) {
 
   $('knopf-nochmal').classList.toggle('versteckt', !tour.letzteRoute);
 
+  const loeschen = new Date(loeschZeitpunkt(tour)).toLocaleString('de-AT', {
+    weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  $('loesch-info').textContent = `🔒 Die Kundenadressen werden automatisch gelöscht: ${loeschen} Uhr`;
+
   // Liste aller Kunden. Erledigte werden grau durchgestrichen.
   const aktuellerStart = tour.letzteRoute ? tour.letzteRoute[0] : 0;
   const liste = $('liste');
@@ -91,8 +126,8 @@ function tourAnzeigen(tour) {
 
 // Adresse antippen -> von Hand ändern oder löschen
 function adresseAendern(nummer) {
-  const tour = tourLaden();
-  if (!tour) return;
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
   const kunde = tour.kunden[nummer];
   const neu = prompt(
     'Adresse ändern (Straße Hausnummer, PLZ Ort).\nLeer lassen und OK drücken = Kunde löschen.',
@@ -120,8 +155,8 @@ function adresseAendern(nummer) {
 
 // Kunde, den die Texterkennung übersehen hat, von Hand dazunehmen
 function kundeHinzufuegen() {
-  const tour = tourLaden();
-  if (!tour) return;
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
 
   const adresse = prompt('Adresse des fehlenden Kunden (Straße Hausnummer, PLZ Ort):', '');
   if (adresse === null || adresse.trim() === '') return;
@@ -189,7 +224,13 @@ async function texterkennungLaden() {
   if (!window.Tesseract) {
     throw new Error('Die Texterkennung konnte nicht geladen werden. Bitte Internet prüfen.');
   }
+  // Alle Teile der Texterkennung kommen aus dem eigenen Ordner "tesseract", nicht aus dem Internet
+  const ordner = new URL('tesseract/', location.href).href;
   worker = await Tesseract.createWorker('deu', 1, {
+    workerPath: ordner + 'worker.min.js',
+    corePath: ordner,
+    langPath: ordner,
+    workerBlobURL: false,
     logger: (m) => fortschritt(m),
   });
   await worker.setParameters({
@@ -258,7 +299,13 @@ async function fotosLesen() {
     // Unten auf der Liste steht "Anzahl Stopps 16". Damit merken wir, ob Kunden fehlen.
     const stopps = alleZeilen.join(' ').match(/Anzahl\s+Stopps\s+(\d{1,3})/i);
 
-    const tour = { kunden, naechste: 0, letzteRoute: null, stopps: stopps ? Number(stopps[1]) : null };
+    const tour = {
+      kunden,
+      naechste: 0,
+      letzteRoute: null,
+      stopps: stopps ? Number(stopps[1]) : null,
+      erstellt: Date.now(),
+    };
     tourSpeichern(tour);
     fotos = [];
     $('vorschau').innerHTML = '';
@@ -413,20 +460,22 @@ function mapsLink(kunden) {
 function routeOeffnen(tour, von, bis) {
   tour.letzteRoute = [von, bis];
   tour.naechste = Math.max(tour.naechste, bis);
+  tour.zuletztGeoeffnet = Date.now();
   tourSpeichern(tour);
   tourAnzeigen(tour);
   window.location.href = mapsLink(tour.kunden.slice(von, bis));
 }
 
 $('knopf-naechste').addEventListener('click', () => {
-  const tour = tourLaden();
-  if (!tour) return;
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
   routeOeffnen(tour, tour.naechste, Math.min(tour.naechste + PRO_ROUTE, tour.kunden.length));
 });
 
 $('knopf-nochmal').addEventListener('click', () => {
-  const tour = tourLaden();
-  if (tour && tour.letzteRoute) routeOeffnen(tour, tour.letzteRoute[0], tour.letzteRoute[1]);
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+  if (tour.letzteRoute) routeOeffnen(tour, tour.letzteRoute[0], tour.letzteRoute[1]);
 });
 
 $('knopf-neu').addEventListener('click', () => {
@@ -439,12 +488,22 @@ $('knopf-neu').addEventListener('click', () => {
 
 // ---------- Beim Öffnen der App ----------
 
-const gespeichert = tourLaden();
-if (gespeichert && gespeichert.kunden && gespeichert.kunden.length) {
-  tourAnzeigen(gespeichert);
-} else {
-  zeige('seite-fotos');
+function startbildschirm() {
+  const tour = aktuelleTour();
+  if (tour) {
+    tourAnzeigen(tour);
+  } else if (!$('seite-tour').classList.contains('versteckt')) {
+    zeige('seite-fotos'); // Tour ist abgelaufen und wurde gelöscht
+  } else if ($('seite-lesen').classList.contains('versteckt')) {
+    zeige('seite-fotos');
+  }
 }
+startbildschirm();
+
+// Die App bleibt im Handy oft im Hintergrund offen. Beim Zurückkommen nochmal prüfen.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') startbildschirm();
+});
 
 // Damit die App vom Home-Bildschirm aus wie eine echte App funktioniert
 if ('serviceWorker' in navigator) {
