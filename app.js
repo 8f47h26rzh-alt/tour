@@ -2,7 +2,7 @@
 // Alles läuft im Handy-Browser. Es gibt keinen Server.
 
 // Bei jeder Änderung um eins erhöhen (Verlauf steht in ANLEITUNG.md)
-const VERSION = '1.5';
+const VERSION = '1.6';
 
 const PRO_ROUTE = 10;            // So viele Kunden schickt die App auf einmal an Google Maps
 const SPEICHER_NAME = 'tour-v1'; // Unter diesem Namen merkt sich das Handy die Tour
@@ -21,6 +21,7 @@ let fotos = [];        // Die Fotos, die gerade gemacht wurden: { datei, url, be
 let worker = null;     // Die Texterkennung (wird erst beim ersten Mal geladen)
 let fortschritt = () => {};
 let plzListe = null;   // Postleitzahlen von Österreich mit allen Ortschaften (aus plz-at.json)
+let kartenGruppe = null; // Welche 10er-Gruppe gerade auf der Karte zu sehen ist (null = Karte zu)
 
 // Die gelesenen Fotos zum Prüfen. Sie bleiben nur im Arbeitsspeicher und werden nie gespeichert.
 // { tourId, seiten: [{ url, breite, hoehe, zeilenHoehe }], fehlend: [{ seite, box }] }
@@ -246,34 +247,132 @@ function tourAnzeigen(tour) {
   });
   $('loesch-info').textContent = `🔒 Die Kundenadressen werden automatisch gelöscht: ${loeschen} Uhr`;
 
+  karteAnzeigen(tour);
+
   // Liste aller Kunden. Erledigte werden grau durchgestrichen.
   const aktuellerStart = tour.letzteRoute ? tour.letzteRoute[0] : 0;
   const liste = $('liste');
   liste.innerHTML = '';
   kunden.forEach((k, i) => {
     const li = document.createElement('li');
+    const text = document.createElement('div');
+    text.className = 'kunde-text';
     const nr = document.createElement('b');
     nr.textContent = k.pos !== null ? k.pos + '.' : '?';
-    li.append(nr, ' ' + k.adresse.replace(', Österreich', ''), k.gemerkt ? ' 🧠' : '', ' ✏️');
+    text.append(nr, ' ' + k.adresse.replace(', Österreich', ''), k.gemerkt ? ' 🧠' : '', ' ✏️');
+    if (k.angefahren) text.append(' ✔️');
     const warnung = warnText(k);
     if (warnung) {
       const hinweis = document.createElement('div');
       hinweis.className = 'warnung';
       hinweis.textContent = warnung;
-      li.append(hinweis);
+      text.append(hinweis);
     }
     if (k.uebersprungen) {
       li.classList.add('uebersprungen');
-      li.prepend('⏭️ ');
+      text.prepend('⏭️ ');
     } else if (i < aktuellerStart) {
       li.classList.add('erledigt');
     }
-    if (tour.letzteRoute && !k.uebersprungen && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) li.prepend('🚚 ');
+    if (tour.letzteRoute && !k.uebersprungen && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) text.prepend('🚚 ');
+
+    // Knopf rechts: Navigation nur zu diesem einen Kunden
+    const navi = document.createElement('button');
+    navi.className = 'navi';
+    navi.textContent = '🧭';
+    navi.setAttribute('aria-label', `Navigation zu Pos. ${k.pos ?? '?'} starten`);
+    navi.addEventListener('click', (e) => {
+      e.stopPropagation();
+      naviStarten(i);
+    });
+
+    li.append(text, navi);
     li.addEventListener('click', () => kundeBearbeiten(i));
     liste.append(li);
   });
 
   zeige('seite-tour');
+}
+
+
+// ---------- Karte zum Prüfen der Reihenfolge ----------
+
+// Die Kunden (ohne übersprungene) in 10er-Gruppen, so wie sie auch an Google Maps gehen
+function kartenGruppen(tour) {
+  const aktiv = tour.kunden.filter((k) => !k.uebersprungen);
+  const gruppen = [];
+  for (let i = 0; i < aktiv.length; i += PRO_ROUTE) {
+    gruppen.push({ von: i + 1, bis: Math.min(i + PRO_ROUTE, aktiv.length), kunden: aktiv.slice(i, i + PRO_ROUTE) });
+  }
+  return gruppen;
+}
+
+// Eingebettete Google-Karte mit der Route (ohne API-Schlüssel): erster Kunde -> zweiter -> ...
+function kartenLink(kunden) {
+  const adressen = kunden.map((k) => encodeURIComponent(k.adresse));
+  if (adressen.length === 1) return `https://maps.google.com/maps?q=${adressen[0]}&output=embed`;
+  return `https://maps.google.com/maps?saddr=${adressen[0]}&daddr=${adressen.slice(1).join('+to:')}&output=embed`;
+}
+
+function karteAnzeigen(tour) {
+  const gruppen = kartenGruppen(tour);
+  if (kartenGruppe !== null && kartenGruppe >= gruppen.length) kartenGruppe = gruppen.length ? 0 : null;
+  const offen = kartenGruppe !== null;
+  $('karte-inhalt').classList.toggle('versteckt', !offen);
+  $('knopf-karte').textContent = offen ? '🗺️ Karte schließen' : '🗺️ Route auf der Karte prüfen';
+  if (!offen) {
+    $('karte').removeAttribute('src');
+    return;
+  }
+
+  // Knöpfe zum Umschalten zwischen den 10er-Gruppen
+  const auswahl = $('karte-auswahl');
+  auswahl.innerHTML = '';
+  gruppen.forEach((g, gi) => {
+    const knopf = document.createElement('button');
+    knopf.textContent = `Kunde ${g.von}–${g.bis}`;
+    knopf.classList.toggle('aktiv', gi === kartenGruppe);
+    knopf.addEventListener('click', () => {
+      kartenGruppe = gi;
+      karteAnzeigen(tour);
+    });
+    auswahl.append(knopf);
+  });
+
+  // Nur neu laden, wenn sich die Route geändert hat (sonst flackert die Karte bei jeder Änderung)
+  const link = kartenLink(gruppen[kartenGruppe].kunden);
+  if ($('karte').getAttribute('src') !== link) $('karte').setAttribute('src', link);
+}
+
+$('knopf-karte').addEventListener('click', () => {
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+  kartenGruppe = kartenGruppe === null ? 0 : null;
+  karteAnzeigen(tour);
+});
+
+
+// ---------- Navigation zu einem einzelnen Kunden ----------
+
+function naviLink(kunde) {
+  const parameter = new URLSearchParams({
+    api: '1',
+    destination: kunde.adresse,
+    travelmode: 'driving',
+    dir_action: 'navigate',
+  });
+  return 'https://www.google.com/maps/dir/?' + parameter.toString();
+}
+
+function naviStarten(nummer) {
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+  const kunde = tour.kunden[nummer];
+  kunde.angefahren = Date.now(); // ✔️ in der Liste, damit man sieht, wo man schon war
+  tour.zuletztGeoeffnet = Date.now();
+  tourSpeichern(tour);
+  tourAnzeigen(tour);
+  window.location.href = naviLink(kunde);
 }
 
 
@@ -630,6 +729,7 @@ $('knopf-pruefen-fertig').addEventListener('click', () => {
   const tour = aktuelleTour();
   if (!tour) return startbildschirm();
   merken(tour.kunden); // Wer "Passt" drückt, hat die Kunden geprüft
+  kartenGruppe = 0;    // gleich die Karte zeigen, damit man die Reihenfolge prüfen kann
   tourAnzeigen(tour);
 });
 
@@ -1181,6 +1281,7 @@ $('knopf-neu').addEventListener('click', () => {
   if (!confirm('Die ganze Tour löschen und eine neue anfangen?')) return;
   tourSpeichern(null);
   pruefungVerwerfen();
+  kartenGruppe = null;
   fehler('');
   zeige('seite-fotos');
 });
