@@ -1,6 +1,9 @@
 // Touren-App: Fotos der Tourenübersicht -> Adressen -> Google Maps
 // Alles läuft im Handy-Browser. Es gibt keinen Server.
 
+// Bei jeder Änderung um eins erhöhen (Verlauf steht in ANLEITUNG.md)
+const VERSION = '1.4';
+
 const PRO_ROUTE = 10;            // So viele Kunden schickt die App auf einmal an Google Maps
 const SPEICHER_NAME = 'tour-v1'; // Unter diesem Namen merkt sich das Handy die Tour
 
@@ -836,6 +839,8 @@ $('knopf-neu').addEventListener('click', () => {
 
 
 // ---------- Beim Öffnen der App ----------
+
+$('version').textContent = 'Version ' + VERSION;
 
 function startbildschirm() {
   if (!$('dialog').classList.contains('versteckt')) return; // Fenster offen: nicht stören
