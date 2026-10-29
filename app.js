@@ -2,7 +2,7 @@
 // Alles läuft im Handy-Browser. Es gibt keinen Server.
 
 // Bei jeder Änderung um eins erhöhen (Verlauf steht in ANLEITUNG.md)
-const VERSION = '1.4';
+const VERSION = '1.5';
 
 const PRO_ROUTE = 10;            // So viele Kunden schickt die App auf einmal an Google Maps
 const SPEICHER_NAME = 'tour-v1'; // Unter diesem Namen merkt sich das Handy die Tour
@@ -13,9 +13,14 @@ const LOESCHEN_NACH = 36 * STUNDE;        // ... spätestens 36 Stunden nach dem
                                           //     (die Liste wird oft schon am Vortag fotografiert)
 const LOESCHEN_WENN_FERTIG = 6 * STUNDE;  // ... oder 6 Stunden nachdem die letzte Route geöffnet wurde
 
-let fotos = [];        // Die Fotos, die gerade gemacht wurden
+// Stammkunden-Gedächtnis (nur wenn eingeschaltet): Kundennummer -> geprüfte Adresse
+const GEDAECHTNIS_NAME = 'stammkunden-v1';
+const GEDAECHTNIS_TAGE = 90;              // Kunden, die so lange nicht vorkommen, werden vergessen
+
+let fotos = [];        // Die Fotos, die gerade gemacht wurden: { datei, url, bewertung }
 let worker = null;     // Die Texterkennung (wird erst beim ersten Mal geladen)
 let fortschritt = () => {};
+let plzListe = null;   // Postleitzahlen von Österreich mit allen Ortschaften (aus plz-at.json)
 
 // Die gelesenen Fotos zum Prüfen. Sie bleiben nur im Arbeitsspeicher und werden nie gespeichert.
 // { tourId, seiten: [{ url, breite, hoehe, zeilenHoehe }], fehlend: [{ seite, box }] }
@@ -37,8 +42,7 @@ function tourLaden() {
 // Wann wird die Tour automatisch gelöscht?
 function loeschZeitpunkt(tour) {
   let zeit = tour.erstellt + LOESCHEN_NACH;
-  const fertig = tour.naechste >= tour.kunden.length;
-  if (fertig && tour.zuletztGeoeffnet) zeit = Math.min(zeit, tour.zuletztGeoeffnet + LOESCHEN_WENN_FERTIG);
+  if (tourFertig(tour) && tour.zuletztGeoeffnet) zeit = Math.min(zeit, tour.zuletztGeoeffnet + LOESCHEN_WENN_FERTIG);
   return zeit;
 }
 
@@ -79,18 +83,114 @@ function pruefungVerwerfen() {
 }
 
 
+// ---------- Stammkunden-Gedächtnis ----------
+
+function gedaechtnisLaden() {
+  let g = null;
+  try {
+    g = JSON.parse(localStorage.getItem(GEDAECHTNIS_NAME));
+  } catch (e) { /* nichts gespeichert */ }
+  if (!g || typeof g !== 'object') g = { an: false, kunden: {} };
+  // Lange nicht benutzte Kunden vergessen
+  const grenze = Date.now() - GEDAECHTNIS_TAGE * 24 * STUNDE;
+  for (const nr of Object.keys(g.kunden)) if (g.kunden[nr].zuletzt < grenze) delete g.kunden[nr];
+  return g;
+}
+
+function gedaechtnisSpeichern(g) {
+  try {
+    localStorage.setItem(GEDAECHTNIS_NAME, JSON.stringify(g));
+  } catch (e) { /* Handy lässt nichts speichern */ }
+}
+
+// Geprüfte Kunden ins Gedächtnis schreiben (nur mit sicher gelesener 5-stelliger Kundennummer)
+function merken(kunden) {
+  const g = gedaechtnisLaden();
+  if (!g.an) return;
+  for (const k of kunden) {
+    if (k.nr && /^\d{5}$/.test(k.nr) && !k.unsicher && !k.hinweis) {
+      g.kunden[k.nr] = { adresse: k.adresse, zuletzt: Date.now() };
+    }
+  }
+  gedaechtnisSpeichern(g);
+  gedaechtnisAnzeigen();
+}
+
+// Adresse zu einer Kundennummer nachschlagen.
+// "?1327" heißt: die erste Ziffer war unlesbar -> passt, wenn genau ein gemerkter Kunde so endet.
+function nachschlagen(nr) {
+  if (!nr) return null;
+  const g = gedaechtnisLaden();
+  if (!g.an) return null;
+  let treffer = null;
+  if (/^\d{5}$/.test(nr)) {
+    treffer = g.kunden[nr] ? nr : null;
+  } else {
+    const passend = Object.keys(g.kunden).filter((n) => n.slice(1) === nr.slice(1));
+    if (passend.length === 1) treffer = passend[0];
+  }
+  if (!treffer) return null;
+  g.kunden[treffer].zuletzt = Date.now();
+  gedaechtnisSpeichern(g);
+  return { nr: treffer, adresse: g.kunden[treffer].adresse };
+}
+
+function gedaechtnisAnzeigen() {
+  const g = gedaechtnisLaden();
+  $('gedaechtnis-an').checked = g.an;
+  const anzahl = Object.keys(g.kunden).length;
+  $('knopf-gedaechtnis-loeschen').textContent = `Gedächtnis löschen (${anzahl} ${anzahl === 1 ? 'Kunde' : 'Kunden'})`;
+  $('knopf-gedaechtnis-loeschen').disabled = anzahl === 0;
+}
+
+$('gedaechtnis-an').addEventListener('change', (e) => {
+  const g = gedaechtnisLaden();
+  g.an = e.target.checked;
+  gedaechtnisSpeichern(g);
+  gedaechtnisAnzeigen();
+});
+
+$('knopf-gedaechtnis-loeschen').addEventListener('click', () => {
+  if (!confirm('Alle gemerkten Stammkunden löschen?')) return;
+  const g = gedaechtnisLaden();
+  g.kunden = {};
+  gedaechtnisSpeichern(g);
+  gedaechtnisAnzeigen();
+});
+
+
+// ---------- Route: welche Kunden kommen als Nächstes dran? ----------
+
+// Die nächsten (höchstens 10) Kunden, die nicht übersprungen werden
+function naechsteRoute(tour) {
+  const nummern = [];
+  for (let i = tour.naechste; i < tour.kunden.length && nummern.length < PRO_ROUTE; i++) {
+    if (!tour.kunden[i].uebersprungen) nummern.push(i);
+  }
+  return nummern;
+}
+
+function tourFertig(tour) {
+  return naechsteRoute(tour).length === 0;
+}
+
+function nochOffen(tour) {
+  return tour.kunden.slice(tour.naechste).filter((k) => !k.uebersprungen).length;
+}
+
+
 // ---------- Bildschirme umschalten ----------
 
 const BILDSCHIRME = ['seite-fotos', 'seite-lesen', 'seite-pruefen', 'seite-tour'];
+
+function sichtbar(id) {
+  return !$(id).classList.contains('versteckt');
+}
 
 function zeige(seite) {
   const wechsel = !sichtbar(seite);
   for (const id of BILDSCHIRME) $(id).classList.toggle('versteckt', id !== seite);
   if (wechsel) window.scrollTo(0, 0); // nur beim Wechsel nach oben springen, nicht nach jeder Änderung
-}
-
-function sichtbar(id) {
-  return !$(id).classList.contains('versteckt');
 }
 
 function fehler(text) {
@@ -106,21 +206,34 @@ function neuZeichnen() {
   else tourAnzeigen(tour);
 }
 
+// Gelber Hinweis zu einem Kunden (oder nichts)
+function warnText(k) {
+  if (k.unsicher) return '⚠️ Straße nicht lesbar – antippen zum Ändern';
+  if (k.hinweis) return '⚠️ ' + k.hinweis + ' – bitte prüfen';
+  return '';
+}
+
 function tourAnzeigen(tour) {
   const kunden = tour.kunden;
-  const fertig = tour.naechste >= kunden.length;
-  const von = tour.naechste + 1;
-  const bis = Math.min(tour.naechste + PRO_ROUTE, kunden.length);
+  const route = naechsteRoute(tour);
+  const fertig = route.length === 0;
 
   const knopf = $('knopf-naechste');
   knopf.classList.toggle('versteckt', fertig);
-  knopf.textContent = tour.naechste === 0
-    ? `▶️ Route starten (Kunde ${von}–${bis})`
-    : `▶️ Nächste 10 Kunden (${von}–${bis})`;
+  if (!fertig) {
+    const erste = kunden[route[0]].pos;
+    const letzte = kunden[route[route.length - 1]].pos;
+    const bereich = erste !== null && letzte !== null ? ` (Pos. ${erste}–${letzte})` : '';
+    knopf.textContent = tour.naechste === 0
+      ? `▶️ Route starten: ${route.length} Kunden${bereich}`
+      : `▶️ Nächste ${route.length} Kunden${bereich}`;
+  }
 
+  const uebersprungen = kunden.filter((k) => k.uebersprungen).length;
   $('tour-stand').textContent = fertig
-    ? `✅ Alle ${kunden.length} Kunden sind abgearbeitet.`
-    : `${kunden.length} Kunden erkannt. Noch ${kunden.length - tour.naechste} übrig.`;
+    ? `✅ Alle Kunden sind abgearbeitet.`
+    : `${kunden.length} Kunden in der Tour. Noch ${nochOffen(tour)} offen.`;
+  if (uebersprungen) $('tour-stand').textContent += ` ⏭️ ${uebersprungen} übersprungen.`;
   if (tour.stopps && tour.stopps > kunden.length) {
     $('tour-stand').textContent += ` ⚠️ Laut Liste sind es ${tour.stopps} Stopps – ${tour.stopps - kunden.length} fehlen.`;
   }
@@ -141,15 +254,21 @@ function tourAnzeigen(tour) {
     const li = document.createElement('li');
     const nr = document.createElement('b');
     nr.textContent = k.pos !== null ? k.pos + '.' : '?';
-    li.append(nr, ' ' + k.adresse.replace(', Österreich', ''), ' ✏️');
-    if (k.unsicher) {
+    li.append(nr, ' ' + k.adresse.replace(', Österreich', ''), k.gemerkt ? ' 🧠' : '', ' ✏️');
+    const warnung = warnText(k);
+    if (warnung) {
       const hinweis = document.createElement('div');
       hinweis.className = 'warnung';
-      hinweis.textContent = '⚠️ Straße nicht lesbar – antippen zum Ändern';
+      hinweis.textContent = warnung;
       li.append(hinweis);
     }
-    if (i < aktuellerStart) li.classList.add('erledigt');
-    if (tour.letzteRoute && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) li.prepend('🚚 ');
+    if (k.uebersprungen) {
+      li.classList.add('uebersprungen');
+      li.prepend('⏭️ ');
+    } else if (i < aktuellerStart) {
+      li.classList.add('erledigt');
+    }
+    if (tour.letzteRoute && !k.uebersprungen && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) li.prepend('🚚 ');
     li.addEventListener('click', () => kundeBearbeiten(i));
     liste.append(li);
   });
@@ -176,6 +295,8 @@ function pruefungAnzeigen() {
   if (tour.stopps && tour.stopps > anzahl) stand += ` – laut Liste sind es ${tour.stopps}. ⚠️ Es fehlen ${tour.stopps - anzahl}.`;
   else if (tour.stopps) stand += ` – laut Liste ${tour.stopps}. ✅ Vollständig!`;
   else stand += '.';
+  const gemerkt = tour.kunden.filter((k) => k.gemerkt).length;
+  if (gemerkt) stand += ` 🧠 ${gemerkt} aus dem Gedächtnis.`;
   $('pruef-stand').textContent = stand;
 
   const fehlstellen = offeneFehlstellen(tour);
@@ -198,7 +319,9 @@ function pruefungAnzeigen() {
 
     tour.kunden.forEach((k, i) => {
       if (!k.quelle || k.quelle.seite !== si) return;
-      rahmen.append(markierung(s, k.quelle.box, k.unsicher ? 'unsicher' : 'ok', k.pos ?? '?', () => kundeBearbeiten(i)));
+      const art = k.unsicher || k.hinweis ? 'unsicher' : 'ok';
+      const text = (k.pos ?? '?') + (k.gemerkt ? ' 🧠' : '');
+      rahmen.append(markierung(s, k.quelle.box, art, text, () => kundeBearbeiten(i)));
     });
     fehlstellen.filter((f) => f.seite === si).forEach((f) => {
       rahmen.append(markierung(s, f.box, 'fehlt', '!', () => zeileImFoto(si, (f.box.y0 + f.box.y1) / 2)));
@@ -273,7 +396,6 @@ async function zeileImFoto(si, y) {
     titel: 'Fehlenden Kunden hinzufügen',
     bild: ausschnitt,
     info: '⏳ Ich lese diese Stelle nochmal genauer …',
-    loeschen: false,
   });
 
   // Den Ausschnitt vergrößert nochmal lesen. Das klappt oft besser als beim ganzen Foto.
@@ -286,13 +408,18 @@ async function zeileImFoto(si, y) {
       return Math.abs((box.y0 + box.y1) / 2 - mitte);
     };
     const gefunden = findeKunden(texte).sort((a, b) => abstand(a) - abstand(b))[0];
-    if (gefunden) {
+    const nr = gefunden ? gefunden.nr : texte.map(nummerFinden).find((n) => n) || null;
+    const gemerkt = nachschlagen(nr);
+    if (gemerkt && (!gefunden || gefunden.unsicher || gefunden.hinweis)) {
+      fenster.vorbelegen(gefunden ? gefunden.pos : texte.map(positionFinden).find((p) => p !== null) ?? null,
+        gemerkt.adresse, '🧠 Adresse aus dem Gedächtnis. Bitte kurz mit dem Ausschnitt vergleichen.', gemerkt.nr);
+    } else if (gefunden) {
       fenster.vorbelegen(gefunden.pos, gefunden.adresse, gefunden.unsicher
         ? '⚠️ Die Straße ist nicht lesbar. Bitte aus dem Ausschnitt abtippen.'
-        : '✅ Gelesen. Bitte kurz mit dem Ausschnitt vergleichen.');
+        : '✅ Gelesen. Bitte kurz mit dem Ausschnitt vergleichen.', gefunden.nr);
     } else {
       const pos = texte.map(positionFinden).find((p) => p !== null) ?? null;
-      fenster.vorbelegen(pos, '', '✍️ Konnte nicht gelesen werden. Bitte aus dem Ausschnitt abtippen.');
+      fenster.vorbelegen(pos, '', '✍️ Konnte nicht gelesen werden. Bitte aus dem Ausschnitt abtippen.', nr);
     }
   } catch (e) {
     fenster.vorbelegen(null, '', '✍️ Bitte aus dem Ausschnitt abtippen.');
@@ -304,12 +431,14 @@ async function zeileImFoto(si, y) {
 
   const neu = {
     pos: antwort.pos,
+    nr: antwort.nr,
     adresse: antwort.adresse,
     unsicher: false,
     quelle: { seite: si, box: { x0: seite.breite * 0.03, x1: seite.breite * 0.97, y0: y - h * 0.6, y1: y + h * 0.6 } },
   };
   const hinweis = kundeEinfuegen(tour, neu);
   tourSpeichern(tour);
+  merken([neu]);
   neuZeichnen();
   if (hinweis) alert(hinweis);
 }
@@ -317,7 +446,7 @@ async function zeileImFoto(si, y) {
 
 // ---------- Fenster zum Ändern oder Hinzufügen ----------
 
-function dialogOeffnen({ titel, bild, info, loeschen }) {
+function dialogOeffnen({ titel, bild, info, loeschen = false, ueberspringen = null }) {
   $('dialog-titel').textContent = titel;
   const bildFeld = $('dialog-bild');
   bildFeld.classList.toggle('versteckt', !bild);
@@ -332,18 +461,24 @@ function dialogOeffnen({ titel, bild, info, loeschen }) {
   }
   $('dialog-pos').value = '';
   $('dialog-adresse').value = '';
+  $('dialog-nr').value = '';
+  $('dialog-nr-feld').classList.toggle('versteckt', !gedaechtnisLaden().an);
   $('dialog-info').textContent = info || '';
   $('dialog-loeschen').classList.toggle('versteckt', !loeschen);
+  // ueberspringen: null = Knopf nicht zeigen, false = "überspringen", true = "doch anfahren"
+  $('dialog-ueberspringen').classList.toggle('versteckt', ueberspringen === null);
+  $('dialog-ueberspringen').textContent = ueberspringen ? '↩️ Doch anfahren' : '⏭️ Diesmal überspringen';
   $('dialog').classList.remove('versteckt');
 
   let offen = true;
   let selbstGetippt = false;
-  $('dialog-pos').oninput = $('dialog-adresse').oninput = () => { selbstGetippt = true; };
+  $('dialog-pos').oninput = $('dialog-adresse').oninput = $('dialog-nr').oninput = () => { selbstGetippt = true; };
 
   const ergebnis = new Promise((fertig) => {
     const schliessen = (aktion) => {
       const adresseText = $('dialog-adresse').value.trim();
       const posText = $('dialog-pos').value.trim();
+      const nrText = $('dialog-nr').value.trim();
       if (aktion === 'speichern' && !adresseText) {
         $('dialog-info').textContent = '⚠️ Bitte eine Adresse eingeben.';
         return;
@@ -353,22 +488,25 @@ function dialogOeffnen({ titel, bild, info, loeschen }) {
       fertig({
         aktion,
         pos: /^\d{1,3}$/.test(posText) ? Number(posText) : null,
+        nr: /^\d{5}$/.test(nrText) ? nrText : null,
         adresse: /österreich/i.test(adresseText) ? adresseText : adresseText + ', Österreich',
       });
     };
     $('dialog-ok').onclick = () => schliessen('speichern');
     $('dialog-loeschen').onclick = () => schliessen('loeschen');
+    $('dialog-ueberspringen').onclick = () => schliessen('ueberspringen');
     $('dialog-abbrechen').onclick = () => schliessen(null);
   });
 
   return {
     ergebnis,
     // Felder ausfüllen, aber nur, wenn man noch nicht selbst etwas getippt hat
-    vorbelegen(pos, adresse, text) {
+    vorbelegen(pos, adresse, text, nr) {
       if (!offen) return;
       if (!selbstGetippt) {
         $('dialog-pos').value = pos ?? '';
         $('dialog-adresse').value = (adresse || '').replace(', Österreich', '');
+        $('dialog-nr').value = nr && /^\d{5}$/.test(nr) ? nr : '';
       }
       if (text) $('dialog-info').textContent = text;
     },
@@ -376,7 +514,7 @@ function dialogOeffnen({ titel, bild, info, loeschen }) {
 }
 
 
-// ---------- Kunden ändern, löschen, hinzufügen ----------
+// ---------- Kunden ändern, löschen, überspringen, hinzufügen ----------
 
 // Kunde an der passenden Stelle (nach Pos.) einsortieren. Gibt einen Hinweis zurück, falls nötig.
 function kundeEinfuegen(tour, kunde) {
@@ -406,7 +544,7 @@ function kundeEntfernen(tour, nummer) {
   }
 }
 
-// Kunde antippen (in der Liste oder im Foto) -> ändern oder löschen
+// Kunde antippen (in der Liste oder im Foto) -> ändern, überspringen oder löschen
 async function kundeBearbeiten(nummer) {
   const tour = aktuelleTour();
   if (!tour) return startbildschirm();
@@ -421,13 +559,19 @@ async function kundeBearbeiten(nummer) {
       Math.max(0, kunde.quelle.box.y0 - h), Math.min(seite.hoehe, kunde.quelle.box.y1 + 2.2 * h));
   }
 
+  let info = '';
+  if (kunde.unsicher) info = '⚠️ Die Straße war nicht lesbar. Bitte ergänzen.';
+  else if (kunde.hinweis) info = '⚠️ ' + kunde.hinweis + '. Bitte prüfen.';
+  else if (kunde.gemerkt) info = '🧠 Diese Adresse kommt aus dem Stammkunden-Gedächtnis.';
+
   const fenster = dialogOeffnen({
     titel: 'Kunde ändern',
     bild: ausschnitt,
-    info: kunde.unsicher ? '⚠️ Die Straße war nicht lesbar. Bitte ergänzen.' : '',
+    info,
     loeschen: true,
+    ueberspringen: !!kunde.uebersprungen,
   });
-  fenster.vorbelegen(kunde.pos, kunde.adresse);
+  fenster.vorbelegen(kunde.pos, kunde.adresse, null, kunde.nr);
   const antwort = await fenster.ergebnis;
   if (ausschnitt) ausschnitt.freigeben();
 
@@ -435,8 +579,13 @@ async function kundeBearbeiten(nummer) {
   if (antwort.aktion === 'loeschen') {
     if (!confirm('Diesen Kunden aus der Tour löschen?')) return;
     kundeEntfernen(tour, nummer);
+  } else if (antwort.aktion === 'ueberspringen') {
+    kunde.uebersprungen = !kunde.uebersprungen;
   } else if (antwort.aktion === 'speichern') {
-    const geaendert = { ...kunde, pos: antwort.pos, adresse: antwort.adresse, unsicher: false };
+    const geaendert = {
+      ...kunde, pos: antwort.pos, nr: antwort.nr || kunde.nr, adresse: antwort.adresse, unsicher: false, hinweis: null,
+    };
+    if (antwort.adresse !== kunde.adresse) geaendert.gemerkt = false;
     if (antwort.pos !== kunde.pos && nummer >= tour.naechste) {
       // Neue Pos.-Nummer: Kunde an die richtige Stelle umsortieren
       kundeEntfernen(tour, nummer);
@@ -444,6 +593,7 @@ async function kundeBearbeiten(nummer) {
     } else {
       tour.kunden[nummer] = geaendert;
     }
+    merken([geaendert]);
   } else {
     return; // Abbrechen
   }
@@ -462,13 +612,14 @@ async function kundeHinzufuegen() {
     info: fotosPassen(tour)
       ? 'Tipp: Unter „🔍 Fotos prüfen“ kannst du auch direkt auf die Zeile im Foto tippen.'
       : 'Pos.-Nummer unbekannt? Leer lassen, dann kommt der Kunde ans Ende.',
-    loeschen: false,
   });
   const antwort = await fenster.ergebnis;
   if (antwort.aktion !== 'speichern') return;
 
-  const hinweis = kundeEinfuegen(tour, { pos: antwort.pos, adresse: antwort.adresse, unsicher: false });
+  const neu = { pos: antwort.pos, nr: antwort.nr, adresse: antwort.adresse, unsicher: false };
+  const hinweis = kundeEinfuegen(tour, neu);
   tourSpeichern(tour);
+  merken([neu]);
   neuZeichnen();
   if (hinweis) alert(hinweis);
 }
@@ -477,8 +628,9 @@ $('knopf-dazu').addEventListener('click', kundeHinzufuegen);
 $('knopf-fotos-pruefen').addEventListener('click', pruefungAnzeigen);
 $('knopf-pruefen-fertig').addEventListener('click', () => {
   const tour = aktuelleTour();
-  if (tour) tourAnzeigen(tour);
-  else startbildschirm();
+  if (!tour) return startbildschirm();
+  merken(tour.kunden); // Wer "Passt" drückt, hat die Kunden geprüft
+  tourAnzeigen(tour);
 });
 
 
@@ -486,23 +638,102 @@ $('knopf-pruefen-fertig').addEventListener('click', () => {
 
 $('knopf-foto').addEventListener('click', () => $('kamera').click());
 
-$('kamera').addEventListener('change', (e) => {
+$('kamera').addEventListener('change', async (e) => {
   const datei = e.target.files[0];
   e.target.value = ''; // damit man gleich das nächste Foto machen kann
   if (!datei) return;
-
-  fotos.push(datei);
-  const bild = document.createElement('img');
-  bild.src = URL.createObjectURL(datei);
-  $('vorschau').append(bild);
-
-  $('foto-zahl').textContent = fotos.length === 1
-    ? '1 Seite fotografiert. Nächste Seite fotografieren oder „Fertig“ drücken.'
-    : `${fotos.length} Seiten fotografiert. Nächste Seite fotografieren oder „Fertig“ drücken.`;
-  $('knopf-fertig').disabled = false;
+  const foto = { datei, url: URL.createObjectURL(datei), bewertung: null };
+  fotos.push(foto);
+  vorschauAnzeigen();
+  foto.bewertung = await fotoBewerten(foto.url);
+  vorschauAnzeigen();
 });
 
 $('knopf-fertig').addEventListener('click', fotosLesen);
+
+// Vorschaubilder der Fotos. Antippen = Foto löschen.
+function vorschauAnzeigen() {
+  const vorschau = $('vorschau');
+  vorschau.innerHTML = '';
+  fotos.forEach((foto, i) => {
+    const kasten = document.createElement('div');
+    kasten.className = 'vorschau-bild';
+    const bild = document.createElement('img');
+    bild.src = foto.url;
+    const text = document.createElement('span');
+    const b = foto.bewertung;
+    if (b && (b.unscharf || b.dunkel)) {
+      kasten.classList.add('schlecht');
+      text.textContent = b.dunkel ? '⚠️ zu dunkel' : '⚠️ unscharf';
+    } else {
+      text.textContent = `Seite ${i + 1}`;
+    }
+    kasten.append(bild, text);
+    kasten.addEventListener('click', () => {
+      if (!confirm(`Foto von Seite ${i + 1} löschen?`)) return;
+      URL.revokeObjectURL(foto.url);
+      fotos.splice(i, 1);
+      vorschauAnzeigen();
+    });
+    vorschau.append(kasten);
+  });
+
+  $('foto-zahl').textContent = fotos.length === 0
+    ? 'Alle Seiten der Tourenübersicht nacheinander fotografieren. Dann „Fertig“ drücken.'
+    : `${fotos.length} ${fotos.length === 1 ? 'Seite' : 'Seiten'} fotografiert. Nächste Seite fotografieren oder „Fertig“ drücken. Foto antippen = löschen.`;
+  const schlecht = fotos.map((f, i) => (f.bewertung && (f.bewertung.unscharf || f.bewertung.dunkel) ? i + 1 : 0)).filter(Boolean);
+  $('foto-warnung').classList.toggle('versteckt', schlecht.length === 0);
+  $('foto-warnung').textContent = schlecht.length === 0 ? '' : (schlecht.length === 1
+    ? `⚠️ Das Foto von Seite ${schlecht[0]} ist wahrscheinlich unscharf oder zu dunkel. Antippen zum Löschen und nochmal fotografieren.`
+    : `⚠️ Die Fotos der Seiten ${schlecht.join(', ')} sind wahrscheinlich unscharf oder zu dunkel. Antippen zum Löschen und nochmal fotografieren.`);
+  $('knopf-fertig').disabled = fotos.length === 0;
+}
+
+// Grobe Prüfung direkt nach dem Fotografieren: zu dunkel? verwackelt?
+// Gemessen wird, wie stark sich benachbarte Bildpunkte unterscheiden. Scharfe Schrift hat harte Kanten.
+// Gemessen: gute Fotos der Tourenübersicht ca. 1000–4000, leicht verwackelt (Schrift unlesbar) unter 100
+const SCHAERFE_MINDESTENS = 150;
+const HELLIGKEIT_MINDESTENS = 70;
+
+async function fotoBewerten(url) {
+  try {
+    const bild = new Image();
+    bild.src = url;
+    await bild.decode();
+    const breite = 1000;
+    const hoehe = Math.round((bild.naturalHeight / bild.naturalWidth) * breite);
+    const leinwand = document.createElement('canvas');
+    leinwand.width = breite;
+    leinwand.height = hoehe;
+    const ctx = leinwand.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bild, 0, 0, breite, hoehe);
+    const d = ctx.getImageData(0, 0, breite, hoehe).data;
+
+    const grau = new Float32Array(breite * hoehe);
+    let summe = 0;
+    for (let i = 0; i < grau.length; i++) {
+      grau[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+      summe += grau[i];
+    }
+    // Kantenstärke (Laplace) nur im mittleren Bereich, dort liegt das Blatt
+    let n = 0, mittel = 0, quadrat = 0;
+    for (let y = Math.floor(hoehe * 0.15); y < hoehe * 0.85; y++) {
+      for (let x = Math.floor(breite * 0.15); x < breite * 0.85; x++) {
+        const i = y * breite + x;
+        const l = 4 * grau[i] - grau[i - 1] - grau[i + 1] - grau[i - breite] - grau[i + breite];
+        n++;
+        mittel += l;
+        quadrat += l * l;
+      }
+    }
+    mittel /= n;
+    const schaerfe = quadrat / n - mittel * mittel;
+    leinwand.width = leinwand.height = 0;
+    return { schaerfe, helligkeit: summe / grau.length, unscharf: schaerfe < SCHAERFE_MINDESTENS, dunkel: summe / grau.length < HELLIGKEIT_MINDESTENS };
+  } catch (e) {
+    return null;
+  }
+}
 
 
 // ---------- Texterkennung ----------
@@ -575,11 +806,12 @@ async function fotosLesen() {
       }
     };
 
+    await plzLaden();
     const w = await texterkennungLaden();
     const alleZeilen = []; // { text, seite, box }
     const seiten = [];
     for (seite = 0; seite < fotos.length; seite++) {
-      const leinwand = await bildVorbereiten(fotos[seite]);
+      const leinwand = await bildVorbereiten(fotos[seite].datei);
       const ergebnis = await w.recognize(leinwand);
       const zeilen = ergebnis.data.lines.map((l) => ({ text: l.text.trim(), seite, box: l.bbox }));
       alleZeilen.push(...zeilen);
@@ -597,10 +829,6 @@ async function fotosLesen() {
 
     const benutzt = new Set();
     const kunden = findeKunden(alleZeilen.map((z) => z.text), benutzt);
-    if (kunden.length === 0) {
-      seiten.forEach((s) => URL.revokeObjectURL(s.url));
-      throw new Error('Auf den Fotos wurden keine Adressen gefunden. Bitte nochmal gerade, hell und scharf fotografieren.');
-    }
 
     // Merken, wo im Foto jeder Kunde steht
     kunden.forEach((k) => {
@@ -618,10 +846,28 @@ async function fotosLesen() {
       delete k.zeilen;
     });
 
-    // Zeilen mit Pos. und Kundennummer, aus denen kein Kunde wurde -> später rot markieren
-    const fehlend = alleZeilen
-      .filter((z, i) => !benutzt.has(i) && POS_NR.test(zeileBereinigen(z.text)))
-      .map((z) => ({ seite: z.seite, box: z.box }));
+    // Stammkunden: geprüfte Adresse aus dem Gedächtnis nehmen
+    for (const k of kunden) {
+      const gemerkt = nachschlagen(k.nr);
+      if (!gemerkt) continue;
+      Object.assign(k, { nr: gemerkt.nr, adresse: gemerkt.adresse, unsicher: false, hinweis: null, gemerkt: true });
+    }
+
+    // Zeilen mit Pos. und Kundennummer, aus denen kein Kunde wurde.
+    // Steht die Kundennummer im Gedächtnis, wird der Kunde trotzdem aufgenommen, sonst später rot markiert.
+    const fehlend = [];
+    const nachtraeglich = [];
+    alleZeilen.forEach((z, i) => {
+      if (benutzt.has(i) || !POS_NR.test(zeileBereinigen(z.text))) return;
+      const pos = positionFinden(z.text);
+      const gemerkt = nachschlagen(nummerFinden(z.text));
+      const schonDa = kunden.some((k) => (pos !== null && k.pos === pos) || (gemerkt && k.nr === gemerkt.nr));
+      if (gemerkt && !schonDa) {
+        nachtraeglich.push({ pos, nr: gemerkt.nr, adresse: gemerkt.adresse, unsicher: false, gemerkt: true, quelle: { seite: z.seite, box: z.box } });
+      } else if (!schonDa) {
+        fehlend.push({ seite: z.seite, box: z.box });
+      }
+    });
 
     // Unten auf der Liste steht "Anzahl Stopps 16". Damit merken wir, ob Kunden fehlen.
     const stopps = alleZeilen.map((z) => z.text).join(' ').match(/Anzahl\s+Stopps\s+(\d{1,3})/i);
@@ -633,21 +879,106 @@ async function fotosLesen() {
       stopps: stopps ? Number(stopps[1]) : null,
       erstellt: Date.now(),
     };
+    nachtraeglich.forEach((k) => kundeEinfuegen(tour, k));
+
+    if (tour.kunden.length === 0) {
+      seiten.forEach((s) => URL.revokeObjectURL(s.url));
+      throw new Error('Auf den Fotos wurden keine Adressen gefunden. Bitte nochmal gerade, hell und scharf fotografieren.');
+    }
     tourSpeichern(tour);
 
     pruefungVerwerfen();
     pruefung = { tourId: tour.erstellt, seiten, fehlend };
 
+    fotos.forEach((f) => URL.revokeObjectURL(f.url));
     fotos = [];
-    $('vorschau').querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
-    $('vorschau').innerHTML = '';
-    $('knopf-fertig').disabled = true;
+    vorschauAnzeigen();
     if (navigator.vibrate) navigator.vibrate(300);
     pruefungAnzeigen();
   } catch (e) {
     zeige('seite-fotos');
     fehler(e.message);
   }
+}
+
+
+// ---------- Postleitzahlen prüfen ----------
+// Quelle: GeoNames (www.geonames.org), Lizenz CC BY 4.0
+
+async function plzLaden() {
+  if (plzListe) return plzListe;
+  try {
+    plzListe = await (await fetch('plz-at.json')).json();
+  } catch (e) {
+    plzListe = null; // ohne Liste wird einfach nichts geprüft
+  }
+  return plzListe;
+}
+
+// Zum Vergleichen: klein, ohne Leerzeichen, Bindestriche und Punkte ("Klein-Meiseldorf" = "Kleinmeiseldorf")
+function ortVergleich(text) {
+  return text.toLowerCase().replace(/sankt/g, 'st').replace(/[^a-zäöüß]/g, '');
+}
+
+// "Wien, Favoriten" -> "Wien"
+function ortKurz(name) {
+  return name.split(',')[0].trim();
+}
+
+function tippfehler(a, b) {
+  const zeile = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let vorher = zeile[0];
+    zeile[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const merk = zeile[j];
+      zeile[j] = Math.min(zeile[j] + 1, zeile[j - 1] + 1, vorher + (a[i - 1] === b[j - 1] ? 0 : 1));
+      vorher = merk;
+    }
+  }
+  return zeile[b.length];
+}
+
+// Passenden Ortsnamen für eine PLZ suchen: genau, abgeschnitten ("Eggenb") oder mit kleinem Lesefehler
+function ortFinden(namen, gelesen) {
+  const v = ortVergleich(gelesen);
+  if (v.length < 3) return null;
+  const kandidaten = [];
+  for (const name of namen) {
+    for (const w of new Set([ortVergleich(name), ortVergleich(ortKurz(name))])) {
+      if (w === v) return { name, genau: true };
+      if (v.length >= 5 && w.startsWith(v)) kandidaten.push({ name, punkte: 0.5 });
+      else {
+        const f = tippfehler(w, v);
+        if (f <= Math.max(1, Math.floor(w.length / 6))) kandidaten.push({ name, punkte: f });
+      }
+    }
+  }
+  kandidaten.sort((a, b) => a.punkte - b.punkte);
+  if (kandidaten.length === 0) return null;
+  if (kandidaten.length > 1 && kandidaten[1].punkte === kandidaten[0].punkte && kandidaten[1].name !== kandidaten[0].name) return null;
+  return { name: kandidaten[0].name, genau: false };
+}
+
+// Prüft PLZ und Ort. Korrigiert kleine Lesefehler. ok = false, wenn beides nicht zusammenpasst.
+function ortPruefen(plz, ort) {
+  if (!plzListe) return { plz, ort, ok: true };
+  if (plzListe[plz]) {
+    const t = ortFinden(plzListe[plz], ort);
+    if (t) return { plz, ort: t.genau ? ort : ortKurz(t.name), ok: true };
+  }
+  // Vielleicht wurde eine Ziffer der PLZ falsch gelesen: die PLZ mit einer anderen Ziffer probieren
+  const treffer = [];
+  for (let i = 0; i < 4; i++) {
+    for (const ziffer of '0123456789') {
+      const andere = plz.slice(0, i) + ziffer + plz.slice(i + 1);
+      if (andere === plz || !plzListe[andere]) continue;
+      const t = ortFinden(plzListe[andere], ort);
+      if (t && t.genau) treffer.push({ plz: andere, ort });
+    }
+  }
+  if (treffer.length === 1) return { ...treffer[0], ok: true };
+  return { plz, ort, ok: false };
 }
 
 
@@ -668,7 +999,7 @@ const VERBINDER = /^(am|an|auf|im|in|zum|zur|der|die|dem|den|unter|ober|obere|un
 
 // Pos. und Kundennummer stehen am Anfang jeder Kundenzeile, z. B. "3   10708   Billa-Herzogenburg".
 // Die Kundennummer hat 5 Zeichen. Das erste wird manchmal falsch gelesen (z. B. "a1327" statt "81327").
-const POS_NR = /(?:^|[^\d+])(\d{1,3})\s+[0-9A-Za-z]\d{4}(?!\d)/;
+const POS_NR = /(?:^|[^\d+])(\d{1,3})\s+([0-9A-Za-z]\d{4})(?!\d)/;
 
 // Tabellenstriche und doppelte Leerzeichen entfernen
 function zeileBereinigen(text) {
@@ -720,6 +1051,13 @@ function positionFinden(text) {
   return treffer ? Number(treffer[1]) : null;
 }
 
+// Kundennummer in der Zeile suchen. Ist die erste Stelle keine Ziffer, wird sie zu "?".
+function nummerFinden(text) {
+  const treffer = zeileBereinigen(text).match(POS_NR);
+  if (!treffer) return null;
+  return /^\d/.test(treffer[2]) ? treffer[2] : '?' + treffer[2].slice(1);
+}
+
 // Findet die Kunden in den Textzeilen.
 // Jeder Kunde merkt sich in "zeilen", aus welchen Zeilen er stammt.
 // In "benutzt" landen alle Zeilen, die zu einem Kunden gehören.
@@ -730,8 +1068,6 @@ function findeKunden(zeilen, benutzt = new Set()) {
   zeilen.forEach((zeile, i) => {
     const t = zeile.match(PLZ_ORT);
     if (!t) return;
-    const plz = t[2];
-    const ort = t[3];
     const davor = zeile.slice(0, t.index + t[1].length).replace(/[,\s]+$/, '');
     const danach = zeile.slice(t.index + t[0].length);
     const vorige = i > 0 && !PLZ_ORT.test(zeilen[i - 1]) ? zeilen[i - 1] : '';
@@ -748,24 +1084,32 @@ function findeKunden(zeilen, benutzt = new Set()) {
       if (strasse) vorigeBenutzt = true;
     }
 
-    // Die Pos. steht in derselben Zeile oder (wenn die Zeile umgebrochen wurde) eine Zeile darüber
+    // Pos. und Kundennummer stehen in derselben Zeile oder (wenn umgebrochen) eine Zeile darüber
     let pos = positionFinden(davor);
+    let nr = nummerFinden(davor);
     if (pos === null && vorige) {
       pos = positionFinden(vorige);
+      nr = nummerFinden(vorige);
       if (pos !== null) vorigeBenutzt = true;
     }
 
     // Weder Straße noch Pos.: das ist wahrscheinlich gar keine Kundenzeile
     if (!strasse && pos === null) return;
 
+    // PLZ und Ort mit dem Verzeichnis vergleichen (kleine Lesefehler werden korrigiert)
+    const geprueft = ortPruefen(t[2], t[3]);
+    const ortText = `${geprueft.plz} ${geprueft.ort}`;
+
     const herkunft = vorigeBenutzt ? [i - 1, i] : [i];
-    herkunft.forEach((nr) => benutzt.add(nr));
+    herkunft.forEach((n) => benutzt.add(n));
 
     // Straße nicht lesbar: Kunde trotzdem aufnehmen, Google Maps fährt dann in den Ort
     gefunden.push({
       pos,
-      adresse: strasse ? `${strasse}, ${plz} ${ort}, Österreich` : `${plz} ${ort}, Österreich`,
+      nr,
+      adresse: strasse ? `${strasse}, ${ortText}, Österreich` : `${ortText}, Österreich`,
       unsicher: !strasse,
+      hinweis: geprueft.ok ? null : 'PLZ und Ort passen nicht zusammen',
       zeilen: herkunft,
     });
   });
@@ -808,19 +1152,23 @@ function mapsLink(kunden) {
   return 'https://www.google.com/maps/dir/?' + parameter.toString();
 }
 
+// Kunden von Nummer "von" bis vor "bis" an Google Maps schicken (übersprungene nicht)
 function routeOeffnen(tour, von, bis) {
+  const ziele = tour.kunden.slice(von, bis).filter((k) => !k.uebersprungen);
+  if (ziele.length === 0) return tourAnzeigen(tour);
   tour.letzteRoute = [von, bis];
   tour.naechste = Math.max(tour.naechste, bis);
   tour.zuletztGeoeffnet = Date.now();
   tourSpeichern(tour);
   tourAnzeigen(tour);
-  window.location.href = mapsLink(tour.kunden.slice(von, bis));
+  window.location.href = mapsLink(ziele);
 }
 
 $('knopf-naechste').addEventListener('click', () => {
   const tour = aktuelleTour();
   if (!tour) return startbildschirm();
-  routeOeffnen(tour, tour.naechste, Math.min(tour.naechste + PRO_ROUTE, tour.kunden.length));
+  const route = naechsteRoute(tour);
+  if (route.length) routeOeffnen(tour, tour.naechste, route[route.length - 1] + 1);
 });
 
 $('knopf-nochmal').addEventListener('click', () => {
@@ -841,6 +1189,8 @@ $('knopf-neu').addEventListener('click', () => {
 // ---------- Beim Öffnen der App ----------
 
 $('version').textContent = 'Version ' + VERSION;
+gedaechtnisAnzeigen();
+plzLaden(); // schon mal im Hintergrund laden
 
 function startbildschirm() {
   if (!$('dialog').classList.contains('versteckt')) return; // Fenster offen: nicht stören
@@ -848,10 +1198,8 @@ function startbildschirm() {
   if (tour) {
     if (sichtbar('seite-pruefen') && fotosPassen(tour)) return; // beim Prüfen bleiben
     tourAnzeigen(tour);
-  } else if (!sichtbar('seite-lesen') && !sichtbar('seite-fotos')) {
-    zeige('seite-fotos'); // Tour ist abgelaufen oder gelöscht
   } else if (!sichtbar('seite-lesen')) {
-    zeige('seite-fotos');
+    zeige('seite-fotos'); // keine Tour (oder abgelaufen)
   }
 }
 startbildschirm();
