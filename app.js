@@ -10,9 +10,13 @@ const LOESCHEN_NACH = 36 * STUNDE;        // ... spätestens 36 Stunden nach dem
                                           //     (die Liste wird oft schon am Vortag fotografiert)
 const LOESCHEN_WENN_FERTIG = 6 * STUNDE;  // ... oder 6 Stunden nachdem die letzte Route geöffnet wurde
 
-let fotos = [];      // Die Fotos, die gerade gemacht wurden
-let worker = null;   // Die Texterkennung (wird erst beim ersten Mal geladen)
+let fotos = [];        // Die Fotos, die gerade gemacht wurden
+let worker = null;     // Die Texterkennung (wird erst beim ersten Mal geladen)
 let fortschritt = () => {};
+
+// Die gelesenen Fotos zum Prüfen. Sie bleiben nur im Arbeitsspeicher und werden nie gespeichert.
+// { tourId, seiten: [{ url, breite, hoehe, zeilenHoehe }], fehlend: [{ seite, box }] }
+let pruefung = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,6 +50,7 @@ function aktuelleTour() {
   }
   if (Date.now() >= loeschZeitpunkt(tour)) {
     tourSpeichern(null);
+    pruefungVerwerfen();
     return null;
   }
   return tour;
@@ -60,18 +65,42 @@ function tourSpeichern(tour) {
   }
 }
 
+// Gehören die Fotos im Arbeitsspeicher zu dieser Tour?
+function fotosPassen(tour) {
+  return !!(pruefung && tour && pruefung.tourId === tour.erstellt);
+}
+
+function pruefungVerwerfen() {
+  if (pruefung) pruefung.seiten.forEach((s) => URL.revokeObjectURL(s.url));
+  pruefung = null;
+}
+
 
 // ---------- Bildschirme umschalten ----------
 
+const BILDSCHIRME = ['seite-fotos', 'seite-lesen', 'seite-pruefen', 'seite-tour'];
+
 function zeige(seite) {
-  for (const id of ['seite-fotos', 'seite-lesen', 'seite-tour']) {
-    $(id).classList.toggle('versteckt', id !== seite);
-  }
+  const wechsel = !sichtbar(seite);
+  for (const id of BILDSCHIRME) $(id).classList.toggle('versteckt', id !== seite);
+  if (wechsel) window.scrollTo(0, 0); // nur beim Wechsel nach oben springen, nicht nach jeder Änderung
+}
+
+function sichtbar(id) {
+  return !$(id).classList.contains('versteckt');
 }
 
 function fehler(text) {
   $('fehler').textContent = text || '';
   $('fehler').classList.toggle('versteckt', !text);
+}
+
+// Nach einer Änderung den Bildschirm neu zeichnen, auf dem man gerade ist
+function neuZeichnen() {
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+  if (sichtbar('seite-pruefen') && fotosPassen(tour)) pruefungAnzeigen();
+  else tourAnzeigen(tour);
 }
 
 function tourAnzeigen(tour) {
@@ -90,10 +119,11 @@ function tourAnzeigen(tour) {
     ? `✅ Alle ${kunden.length} Kunden sind abgearbeitet.`
     : `${kunden.length} Kunden erkannt. Noch ${kunden.length - tour.naechste} übrig.`;
   if (tour.stopps && tour.stopps > kunden.length) {
-    $('tour-stand').textContent += ` ⚠️ Laut Liste sind es ${tour.stopps} Stopps – ${tour.stopps - kunden.length} fehlen. Bitte „Neue Tour“ und schärfer fotografieren.`;
+    $('tour-stand').textContent += ` ⚠️ Laut Liste sind es ${tour.stopps} Stopps – ${tour.stopps - kunden.length} fehlen.`;
   }
 
   $('knopf-nochmal').classList.toggle('versteckt', !tour.letzteRoute);
+  $('knopf-fotos-pruefen').classList.toggle('versteckt', !fotosPassen(tour));
 
   const loeschen = new Date(loeschZeitpunkt(tour)).toLocaleString('de-AT', {
     weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -117,64 +147,239 @@ function tourAnzeigen(tour) {
     }
     if (i < aktuellerStart) li.classList.add('erledigt');
     if (tour.letzteRoute && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) li.prepend('🚚 ');
-    li.addEventListener('click', () => adresseAendern(i));
+    li.addEventListener('click', () => kundeBearbeiten(i));
     liste.append(li);
   });
 
   zeige('seite-tour');
 }
 
-// Adresse antippen -> von Hand ändern oder löschen
-function adresseAendern(nummer) {
-  const tour = aktuelleTour();
-  if (!tour) return startbildschirm();
-  const kunde = tour.kunden[nummer];
-  const neu = prompt(
-    'Adresse ändern (Straße Hausnummer, PLZ Ort).\nLeer lassen und OK drücken = Kunde löschen.',
-    kunde.adresse.replace(', Österreich', '')
-  );
-  if (neu === null) return; // "Abbrechen" gedrückt
 
-  const text = neu.trim();
-  if (text === '') {
-    if (!confirm('Diesen Kunden aus der Tour löschen?')) return;
-    tour.kunden.splice(nummer, 1);
-    // Die Zähler für erledigte Kunden rutschen mit, wenn davor etwas gelöscht wurde
-    if (nummer < tour.naechste) tour.naechste--;
-    if (tour.letzteRoute) {
-      if (nummer < tour.letzteRoute[0]) tour.letzteRoute[0]--;
-      if (nummer < tour.letzteRoute[1]) tour.letzteRoute[1]--;
-    }
-  } else {
-    kunde.adresse = /österreich/i.test(text) ? text : text + ', Österreich';
-    kunde.unsicher = false;
-  }
-  tourSpeichern(tour);
-  tourAnzeigen(tour);
+// ---------- Prüf-Bildschirm: Fotos mit farbigen Markierungen ----------
+
+// Kundenzeilen, die rot markiert werden: Pos. und Kundennummer gesehen, aber kein Kunde daraus geworden
+function offeneFehlstellen(tour) {
+  return pruefung.fehlend.filter((f) => !tour.kunden.some(
+    (k) => k.quelle && k.quelle.seite === f.seite && k.quelle.box.y0 < f.box.y1 && f.box.y0 < k.quelle.box.y1
+  ));
 }
 
-// Kunde, den die Texterkennung übersehen hat, von Hand dazunehmen
-function kundeHinzufuegen() {
+function pruefungAnzeigen() {
   const tour = aktuelleTour();
-  if (!tour) return startbildschirm();
+  if (!tour || !fotosPassen(tour)) return startbildschirm();
 
-  const adresse = prompt('Adresse des fehlenden Kunden (Straße Hausnummer, PLZ Ort):', '');
-  if (adresse === null || adresse.trim() === '') return;
+  const anzahl = tour.kunden.length;
+  let stand = `${anzahl} Kunden erkannt`;
+  if (tour.stopps && tour.stopps > anzahl) stand += ` – laut Liste sind es ${tour.stopps}. ⚠️ Es fehlen ${tour.stopps - anzahl}.`;
+  else if (tour.stopps) stand += ` – laut Liste ${tour.stopps}. ✅ Vollständig!`;
+  else stand += '.';
+  $('pruef-stand').textContent = stand;
 
-  const posText = prompt('Pos.-Nummer von der Liste (z. B. 25).\nUnbekannt? Leer lassen, dann kommt der Kunde ans Ende.', '');
-  if (posText === null) return;
-  const pos = /^\d{1,3}$/.test(posText.trim()) ? Number(posText.trim()) : null;
+  const fehlstellen = offeneFehlstellen(tour);
+  const behaelter = $('pruef-fotos');
+  behaelter.innerHTML = '';
 
-  const kunde = {
-    pos,
-    adresse: /österreich/i.test(adresse) ? adresse.trim() : adresse.trim() + ', Österreich',
-    unsicher: false,
+  pruefung.seiten.forEach((s, si) => {
+    const rahmen = document.createElement('div');
+    rahmen.className = 'foto-rahmen';
+    const bild = document.createElement('img');
+    bild.src = s.url;
+    bild.alt = `Seite ${si + 1}`;
+    rahmen.append(bild);
+
+    // Tippen irgendwo ins Foto = an dieser Stelle einen Kunden suchen
+    rahmen.addEventListener('click', (e) => {
+      const r = rahmen.getBoundingClientRect();
+      zeileImFoto(si, ((e.clientY - r.top) / r.height) * s.hoehe);
+    });
+
+    tour.kunden.forEach((k, i) => {
+      if (!k.quelle || k.quelle.seite !== si) return;
+      rahmen.append(markierung(s, k.quelle.box, k.unsicher ? 'unsicher' : 'ok', k.pos ?? '?', () => kundeBearbeiten(i)));
+    });
+    fehlstellen.filter((f) => f.seite === si).forEach((f) => {
+      rahmen.append(markierung(s, f.box, 'fehlt', '!', () => zeileImFoto(si, (f.box.y0 + f.box.y1) / 2)));
+    });
+
+    behaelter.append(rahmen);
+  });
+
+  zeige('seite-pruefen');
+}
+
+// Ein farbiges Kästchen über einer Zeile im Foto
+function markierung(seite, box, art, beschriftung, aktion) {
+  const rand = seite.zeilenHoehe * 0.3;
+  const m = document.createElement('div');
+  m.className = 'markierung ' + art;
+  m.style.left = ((box.x0 - rand) / seite.breite) * 100 + '%';
+  m.style.top = ((box.y0 - rand) / seite.hoehe) * 100 + '%';
+  m.style.width = ((box.x1 - box.x0 + 2 * rand) / seite.breite) * 100 + '%';
+  m.style.height = ((box.y1 - box.y0 + 2 * rand) / seite.hoehe) * 100 + '%';
+  const b = document.createElement('b');
+  b.textContent = beschriftung;
+  m.append(b);
+  m.addEventListener('click', (e) => {
+    e.stopPropagation();
+    aktion();
+  });
+  return m;
+}
+
+// Einen Streifen aus dem Foto ausschneiden und doppelt so groß machen (zum Anschauen und genauer Lesen)
+async function ausschnittMachen(seite, y0, y1) {
+  const bild = new Image();
+  bild.src = seite.url;
+  await bild.decode();
+  const skala = 2;
+  const leinwand = document.createElement('canvas');
+  leinwand.width = seite.breite * skala;
+  leinwand.height = Math.round((y1 - y0) * skala);
+  const ctx = leinwand.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bild, 0, y0, seite.breite, y1 - y0, 0, 0, leinwand.width, leinwand.height);
+  const url = await alsBildAdresse(leinwand);
+  return {
+    url,
+    leinwand,
+    y0,
+    skala,
+    // So hoch anzeigen, dass die Schrift gut lesbar ist (ca. 20 Pixel)
+    anzeigeHoehe: Math.round(((y1 - y0) * 20) / seite.zeilenHoehe),
+    freigeben() {
+      URL.revokeObjectURL(url);
+      leinwand.width = leinwand.height = 0;
+    },
   };
+}
 
-  // Passende Stelle nach Pos. suchen
+// Auf eine Stelle im Foto getippt: Kunde dort bearbeiten oder neu hinzufügen
+async function zeileImFoto(si, y) {
+  const tour = aktuelleTour();
+  if (!tour || !fotosPassen(tour)) return startbildschirm();
+  const seite = pruefung.seiten[si];
+  const h = seite.zeilenHoehe;
+
+  // Liegt dort schon ein erkannter Kunde? Dann den bearbeiten.
+  const vorhanden = tour.kunden.findIndex((k) => k.quelle && k.quelle.seite === si
+    && y >= k.quelle.box.y0 - h * 0.3 && y <= k.quelle.box.y1 + h * 0.3);
+  if (vorhanden !== -1) return kundeBearbeiten(vorhanden);
+
+  const ausschnitt = await ausschnittMachen(seite, Math.max(0, y - 1.5 * h), Math.min(seite.hoehe, y + 2.5 * h));
+  const fenster = dialogOeffnen({
+    titel: 'Fehlenden Kunden hinzufügen',
+    bild: ausschnitt,
+    info: '⏳ Ich lese diese Stelle nochmal genauer …',
+    loeschen: false,
+  });
+
+  // Den Ausschnitt vergrößert nochmal lesen. Das klappt oft besser als beim ganzen Foto.
+  try {
+    const ergebnis = await (await texterkennungLaden()).recognize(ausschnitt.leinwand);
+    const texte = ergebnis.data.lines.map((l) => l.text.trim());
+    const mitte = (y - ausschnitt.y0) * ausschnitt.skala;
+    const abstand = (k) => {
+      const box = ergebnis.data.lines[k.zeilen[k.zeilen.length - 1]].bbox;
+      return Math.abs((box.y0 + box.y1) / 2 - mitte);
+    };
+    const gefunden = findeKunden(texte).sort((a, b) => abstand(a) - abstand(b))[0];
+    if (gefunden) {
+      fenster.vorbelegen(gefunden.pos, gefunden.adresse, gefunden.unsicher
+        ? '⚠️ Die Straße ist nicht lesbar. Bitte aus dem Ausschnitt abtippen.'
+        : '✅ Gelesen. Bitte kurz mit dem Ausschnitt vergleichen.');
+    } else {
+      const pos = texte.map(positionFinden).find((p) => p !== null) ?? null;
+      fenster.vorbelegen(pos, '', '✍️ Konnte nicht gelesen werden. Bitte aus dem Ausschnitt abtippen.');
+    }
+  } catch (e) {
+    fenster.vorbelegen(null, '', '✍️ Bitte aus dem Ausschnitt abtippen.');
+  }
+
+  const antwort = await fenster.ergebnis;
+  ausschnitt.freigeben();
+  if (antwort.aktion !== 'speichern') return;
+
+  const neu = {
+    pos: antwort.pos,
+    adresse: antwort.adresse,
+    unsicher: false,
+    quelle: { seite: si, box: { x0: seite.breite * 0.03, x1: seite.breite * 0.97, y0: y - h * 0.6, y1: y + h * 0.6 } },
+  };
+  const hinweis = kundeEinfuegen(tour, neu);
+  tourSpeichern(tour);
+  neuZeichnen();
+  if (hinweis) alert(hinweis);
+}
+
+
+// ---------- Fenster zum Ändern oder Hinzufügen ----------
+
+function dialogOeffnen({ titel, bild, info, loeschen }) {
+  $('dialog-titel').textContent = titel;
+  const bildFeld = $('dialog-bild');
+  bildFeld.classList.toggle('versteckt', !bild);
+  $('dialog-bild-hinweis').classList.toggle('versteckt', !bild);
+  if (bild) {
+    const img = bildFeld.querySelector('img');
+    // Auf der Tourenübersicht beginnt die Spalte "Adresse" bei ungefähr 30 % der Breite.
+    // Dorthin vorspulen, damit man die Adresse gleich sieht (Pos. und Nr. liegen links davon).
+    img.onload = () => { bildFeld.scrollLeft = bildFeld.scrollWidth * 0.3; };
+    img.src = bild.url;
+    img.style.height = bild.anzeigeHoehe + 'px';
+  }
+  $('dialog-pos').value = '';
+  $('dialog-adresse').value = '';
+  $('dialog-info').textContent = info || '';
+  $('dialog-loeschen').classList.toggle('versteckt', !loeschen);
+  $('dialog').classList.remove('versteckt');
+
+  let offen = true;
+  let selbstGetippt = false;
+  $('dialog-pos').oninput = $('dialog-adresse').oninput = () => { selbstGetippt = true; };
+
+  const ergebnis = new Promise((fertig) => {
+    const schliessen = (aktion) => {
+      const adresseText = $('dialog-adresse').value.trim();
+      const posText = $('dialog-pos').value.trim();
+      if (aktion === 'speichern' && !adresseText) {
+        $('dialog-info').textContent = '⚠️ Bitte eine Adresse eingeben.';
+        return;
+      }
+      offen = false;
+      $('dialog').classList.add('versteckt');
+      fertig({
+        aktion,
+        pos: /^\d{1,3}$/.test(posText) ? Number(posText) : null,
+        adresse: /österreich/i.test(adresseText) ? adresseText : adresseText + ', Österreich',
+      });
+    };
+    $('dialog-ok').onclick = () => schliessen('speichern');
+    $('dialog-loeschen').onclick = () => schliessen('loeschen');
+    $('dialog-abbrechen').onclick = () => schliessen(null);
+  });
+
+  return {
+    ergebnis,
+    // Felder ausfüllen, aber nur, wenn man noch nicht selbst etwas getippt hat
+    vorbelegen(pos, adresse, text) {
+      if (!offen) return;
+      if (!selbstGetippt) {
+        $('dialog-pos').value = pos ?? '';
+        $('dialog-adresse').value = (adresse || '').replace(', Österreich', '');
+      }
+      if (text) $('dialog-info').textContent = text;
+    },
+  };
+}
+
+
+// ---------- Kunden ändern, löschen, hinzufügen ----------
+
+// Kunde an der passenden Stelle (nach Pos.) einsortieren. Gibt einen Hinweis zurück, falls nötig.
+function kundeEinfuegen(tour, kunde) {
   let stelle = tour.kunden.length;
-  if (pos !== null) {
-    const naechsterGroesserer = tour.kunden.findIndex((k) => k.pos !== null && k.pos > pos);
+  if (kunde.pos !== null) {
+    const naechsterGroesserer = tour.kunden.findIndex((k) => k.pos !== null && k.pos > kunde.pos);
     if (naechsterGroesserer !== -1) stelle = naechsterGroesserer;
   }
   // Schon an Google Maps geschickte Kunden bleiben, wie sie sind.
@@ -184,14 +389,94 @@ function kundeHinzufuegen() {
     stelle = tour.naechste;
     hinweis = 'Dieser Kunde gehört zu einer Route, die schon offen war. Er kommt deshalb in die nächste Route.';
   }
-
   tour.kunden.splice(stelle, 0, kunde);
+  return hinweis;
+}
+
+function kundeEntfernen(tour, nummer) {
+  tour.kunden.splice(nummer, 1);
+  // Die Zähler für erledigte Kunden rutschen mit, wenn davor etwas gelöscht wurde
+  if (nummer < tour.naechste) tour.naechste--;
+  if (tour.letzteRoute) {
+    if (nummer < tour.letzteRoute[0]) tour.letzteRoute[0]--;
+    if (nummer < tour.letzteRoute[1]) tour.letzteRoute[1]--;
+  }
+}
+
+// Kunde antippen (in der Liste oder im Foto) -> ändern oder löschen
+async function kundeBearbeiten(nummer) {
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+  const kunde = tour.kunden[nummer];
+
+  // Wenn die Fotos noch da sind: den passenden Ausschnitt zeigen
+  let ausschnitt = null;
+  if (kunde.quelle && fotosPassen(tour)) {
+    const seite = pruefung.seiten[kunde.quelle.seite];
+    const h = seite.zeilenHoehe;
+    ausschnitt = await ausschnittMachen(seite,
+      Math.max(0, kunde.quelle.box.y0 - h), Math.min(seite.hoehe, kunde.quelle.box.y1 + 2.2 * h));
+  }
+
+  const fenster = dialogOeffnen({
+    titel: 'Kunde ändern',
+    bild: ausschnitt,
+    info: kunde.unsicher ? '⚠️ Die Straße war nicht lesbar. Bitte ergänzen.' : '',
+    loeschen: true,
+  });
+  fenster.vorbelegen(kunde.pos, kunde.adresse);
+  const antwort = await fenster.ergebnis;
+  if (ausschnitt) ausschnitt.freigeben();
+
+  let hinweis = '';
+  if (antwort.aktion === 'loeschen') {
+    if (!confirm('Diesen Kunden aus der Tour löschen?')) return;
+    kundeEntfernen(tour, nummer);
+  } else if (antwort.aktion === 'speichern') {
+    const geaendert = { ...kunde, pos: antwort.pos, adresse: antwort.adresse, unsicher: false };
+    if (antwort.pos !== kunde.pos && nummer >= tour.naechste) {
+      // Neue Pos.-Nummer: Kunde an die richtige Stelle umsortieren
+      kundeEntfernen(tour, nummer);
+      hinweis = kundeEinfuegen(tour, geaendert);
+    } else {
+      tour.kunden[nummer] = geaendert;
+    }
+  } else {
+    return; // Abbrechen
+  }
   tourSpeichern(tour);
-  tourAnzeigen(tour);
+  neuZeichnen();
+  if (hinweis) alert(hinweis);
+}
+
+// Kunde, den die Texterkennung übersehen hat, von Hand dazunehmen
+async function kundeHinzufuegen() {
+  const tour = aktuelleTour();
+  if (!tour) return startbildschirm();
+
+  const fenster = dialogOeffnen({
+    titel: 'Fehlenden Kunden hinzufügen',
+    info: fotosPassen(tour)
+      ? 'Tipp: Unter „🔍 Fotos prüfen“ kannst du auch direkt auf die Zeile im Foto tippen.'
+      : 'Pos.-Nummer unbekannt? Leer lassen, dann kommt der Kunde ans Ende.',
+    loeschen: false,
+  });
+  const antwort = await fenster.ergebnis;
+  if (antwort.aktion !== 'speichern') return;
+
+  const hinweis = kundeEinfuegen(tour, { pos: antwort.pos, adresse: antwort.adresse, unsicher: false });
+  tourSpeichern(tour);
+  neuZeichnen();
   if (hinweis) alert(hinweis);
 }
 
 $('knopf-dazu').addEventListener('click', kundeHinzufuegen);
+$('knopf-fotos-pruefen').addEventListener('click', pruefungAnzeigen);
+$('knopf-pruefen-fertig').addEventListener('click', () => {
+  const tour = aktuelleTour();
+  if (tour) tourAnzeigen(tour);
+  else startbildschirm();
+});
 
 
 // ---------- Fotos machen ----------
@@ -265,6 +550,10 @@ async function bildVorbereiten(datei) {
   return leinwand;
 }
 
+function alsBildAdresse(leinwand) {
+  return new Promise((fertig) => leinwand.toBlob((b) => fertig(URL.createObjectURL(b)), 'image/jpeg', 0.85));
+}
+
 async function fotosLesen() {
   fehler('');
   zeige('seite-lesen');
@@ -284,20 +573,55 @@ async function fotosLesen() {
     };
 
     const w = await texterkennungLaden();
-    let alleZeilen = [];
+    const alleZeilen = []; // { text, seite, box }
+    const seiten = [];
     for (seite = 0; seite < fotos.length; seite++) {
       const leinwand = await bildVorbereiten(fotos[seite]);
       const ergebnis = await w.recognize(leinwand);
-      alleZeilen = alleZeilen.concat(ergebnis.data.text.split('\n'));
+      const zeilen = ergebnis.data.lines.map((l) => ({ text: l.text.trim(), seite, box: l.bbox }));
+      alleZeilen.push(...zeilen);
+
+      // Typische Schrifthöhe auf diesem Foto (für Markierungen und Ausschnitte)
+      const hoehen = zeilen.map((z) => z.box.y1 - z.box.y0).sort((a, b) => a - b);
+      seiten.push({
+        url: await alsBildAdresse(leinwand),
+        breite: leinwand.width,
+        hoehe: leinwand.height,
+        zeilenHoehe: hoehen[Math.floor(hoehen.length / 2)] || 30,
+      });
+      leinwand.width = leinwand.height = 0; // Arbeitsspeicher freigeben
     }
 
-    const kunden = findeKunden(alleZeilen);
+    const benutzt = new Set();
+    const kunden = findeKunden(alleZeilen.map((z) => z.text), benutzt);
     if (kunden.length === 0) {
+      seiten.forEach((s) => URL.revokeObjectURL(s.url));
       throw new Error('Auf den Fotos wurden keine Adressen gefunden. Bitte nochmal gerade, hell und scharf fotografieren.');
     }
 
+    // Merken, wo im Foto jeder Kunde steht
+    kunden.forEach((k) => {
+      const hauptzeile = alleZeilen[k.zeilen[k.zeilen.length - 1]];
+      const teile = k.zeilen.map((i) => alleZeilen[i]).filter((z) => z.seite === hauptzeile.seite);
+      k.quelle = {
+        seite: hauptzeile.seite,
+        box: {
+          x0: Math.min(...teile.map((z) => z.box.x0)),
+          y0: Math.min(...teile.map((z) => z.box.y0)),
+          x1: Math.max(...teile.map((z) => z.box.x1)),
+          y1: Math.max(...teile.map((z) => z.box.y1)),
+        },
+      };
+      delete k.zeilen;
+    });
+
+    // Zeilen mit Pos. und Kundennummer, aus denen kein Kunde wurde -> später rot markieren
+    const fehlend = alleZeilen
+      .filter((z, i) => !benutzt.has(i) && POS_NR.test(zeileBereinigen(z.text)))
+      .map((z) => ({ seite: z.seite, box: z.box }));
+
     // Unten auf der Liste steht "Anzahl Stopps 16". Damit merken wir, ob Kunden fehlen.
-    const stopps = alleZeilen.join(' ').match(/Anzahl\s+Stopps\s+(\d{1,3})/i);
+    const stopps = alleZeilen.map((z) => z.text).join(' ').match(/Anzahl\s+Stopps\s+(\d{1,3})/i);
 
     const tour = {
       kunden,
@@ -307,10 +631,16 @@ async function fotosLesen() {
       erstellt: Date.now(),
     };
     tourSpeichern(tour);
+
+    pruefungVerwerfen();
+    pruefung = { tourId: tour.erstellt, seiten, fehlend };
+
     fotos = [];
+    $('vorschau').querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
     $('vorschau').innerHTML = '';
+    $('knopf-fertig').disabled = true;
     if (navigator.vibrate) navigator.vibrate(300);
-    tourAnzeigen(tour);
+    pruefungAnzeigen();
   } catch (e) {
     zeige('seite-fotos');
     fehler(e.message);
@@ -336,6 +666,11 @@ const VERBINDER = /^(am|an|auf|im|in|zum|zur|der|die|dem|den|unter|ober|obere|un
 // Pos. und Kundennummer stehen am Anfang jeder Kundenzeile, z. B. "3   10708   Billa-Herzogenburg".
 // Die Kundennummer hat 5 Zeichen. Das erste wird manchmal falsch gelesen (z. B. "a1327" statt "81327").
 const POS_NR = /(?:^|[^\d+])(\d{1,3})\s+[0-9A-Za-z]\d{4}(?!\d)/;
+
+// Tabellenstriche und doppelte Leerzeichen entfernen
+function zeileBereinigen(text) {
+  return text.replace(/[|\[\]{}_]/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
 // Sucht am Ende von "text" eine Straße mit Hausnummer, z. B. "Müller GmbH Hauptstraße 12" -> "Hauptstraße 12"
 function strasseAmEnde(text) {
@@ -378,13 +713,15 @@ function strasseFinden(davor) {
 
 // Pos.-Nummer in der Zeile suchen (Zahl vor der 5-stelligen Kundennummer)
 function positionFinden(text) {
-  const treffer = text.match(POS_NR);
+  const treffer = zeileBereinigen(text).match(POS_NR);
   return treffer ? Number(treffer[1]) : null;
 }
 
-function findeKunden(zeilen) {
-  // Tabellenstriche und doppelte Leerzeichen entfernen
-  zeilen = zeilen.map((z) => z.replace(/[|\[\]{}_]/g, ' ').replace(/\s+/g, ' ').trim());
+// Findet die Kunden in den Textzeilen.
+// Jeder Kunde merkt sich in "zeilen", aus welchen Zeilen er stammt.
+// In "benutzt" landen alle Zeilen, die zu einem Kunden gehören.
+function findeKunden(zeilen, benutzt = new Set()) {
+  zeilen = zeilen.map(zeileBereinigen);
 
   const gefunden = [];
   zeilen.forEach((zeile, i) => {
@@ -395,6 +732,7 @@ function findeKunden(zeilen) {
     const davor = zeile.slice(0, t.index + t[1].length).replace(/[,\s]+$/, '');
     const danach = zeile.slice(t.index + t[0].length);
     const vorige = i > 0 && !PLZ_ORT.test(zeilen[i - 1]) ? zeilen[i - 1] : '';
+    let vorigeBenutzt = false;
 
     // Die Straße steht meistens vor der PLZ, manchmal danach oder eine Zeile darüber
     let strasse = strasseFinden(davor);
@@ -402,20 +740,30 @@ function findeKunden(zeilen) {
       const nachher = danach.match(/^[,\s]*([A-ZÄÖÜ][^\d]{2,40}?\s\d+[a-zA-Z]?)/);
       if (nachher) strasse = nachher[1].trim();
     }
-    if (!strasse && vorige) strasse = strasseFinden(vorige);
+    if (!strasse && vorige) {
+      strasse = strasseFinden(vorige);
+      if (strasse) vorigeBenutzt = true;
+    }
 
     // Die Pos. steht in derselben Zeile oder (wenn die Zeile umgebrochen wurde) eine Zeile darüber
     let pos = positionFinden(davor);
-    if (pos === null && vorige) pos = positionFinden(vorige);
+    if (pos === null && vorige) {
+      pos = positionFinden(vorige);
+      if (pos !== null) vorigeBenutzt = true;
+    }
 
     // Weder Straße noch Pos.: das ist wahrscheinlich gar keine Kundenzeile
     if (!strasse && pos === null) return;
+
+    const herkunft = vorigeBenutzt ? [i - 1, i] : [i];
+    herkunft.forEach((nr) => benutzt.add(nr));
 
     // Straße nicht lesbar: Kunde trotzdem aufnehmen, Google Maps fährt dann in den Ort
     gefunden.push({
       pos,
       adresse: strasse ? `${strasse}, ${plz} ${ort}, Österreich` : `${plz} ${ort}, Österreich`,
       unsicher: !strasse,
+      zeilen: herkunft,
     });
   });
 
@@ -481,6 +829,7 @@ $('knopf-nochmal').addEventListener('click', () => {
 $('knopf-neu').addEventListener('click', () => {
   if (!confirm('Die ganze Tour löschen und eine neue anfangen?')) return;
   tourSpeichern(null);
+  pruefungVerwerfen();
   fehler('');
   zeige('seite-fotos');
 });
@@ -489,12 +838,14 @@ $('knopf-neu').addEventListener('click', () => {
 // ---------- Beim Öffnen der App ----------
 
 function startbildschirm() {
+  if (!$('dialog').classList.contains('versteckt')) return; // Fenster offen: nicht stören
   const tour = aktuelleTour();
   if (tour) {
+    if (sichtbar('seite-pruefen') && fotosPassen(tour)) return; // beim Prüfen bleiben
     tourAnzeigen(tour);
-  } else if (!$('seite-tour').classList.contains('versteckt')) {
-    zeige('seite-fotos'); // Tour ist abgelaufen und wurde gelöscht
-  } else if ($('seite-lesen').classList.contains('versteckt')) {
+  } else if (!sichtbar('seite-lesen') && !sichtbar('seite-fotos')) {
+    zeige('seite-fotos'); // Tour ist abgelaufen oder gelöscht
+  } else if (!sichtbar('seite-lesen')) {
     zeige('seite-fotos');
   }
 }
