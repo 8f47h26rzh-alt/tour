@@ -138,7 +138,7 @@
     @media (prefers-color-scheme: dark) { ol#liste li .warnung { color: #ffb74d; } }
     ol#liste li:last-child { border-bottom: 0; }
     ol#liste li.erledigt { color: var(--grau); text-decoration: line-through; }
-    ol#liste li b { display: inline-block; min-width: 2.2em; }
+    ol#liste li b.pos { display: inline-block; min-width: 2.2em; }
 
     /* Prüf-Bildschirm: Fotos mit farbigen Markierungen */
     .legende { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; margin: 0 0 10px; }
@@ -281,6 +281,8 @@
     <div id="dialog-bild-hinweis" class="klein versteckt">↔️ Ausschnitt nach links und rechts wischen, um die ganze Zeile zu sehen.</div>
     <label for="dialog-pos">Pos.-Nummer</label>
     <input id="dialog-pos" inputmode="numeric" autocomplete="off" placeholder="z. B. 563">
+    <label for="dialog-name">Kundenname</label>
+    <input id="dialog-name" autocomplete="off" placeholder="z. B. Spar Langenlois">
     <label for="dialog-adresse">Adresse (Straße Hausnummer, PLZ Ort)</label>
     <input id="dialog-adresse" autocomplete="off" placeholder="z. B. Lindengasse 4, 3550 Langenlois">
     <div id="dialog-nr-feld" class="versteckt">
