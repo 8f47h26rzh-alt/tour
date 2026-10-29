@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tour</title>
+
+  <!-- Damit die App wie eine echte App vom Home-Bildschirm startet -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1565c0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Tour">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" href="icon-192.png">
+
+  <style>
+    :root {
+      --blau: #1565c0;
+      --gruen: #2e7d32;
+      --rot: #c62828;
+      --text: #1a1a1a;
+      --grau: #666;
+      --hintergrund: #f4f6f9;
+      --karte: #ffffff;
+      --rand: #dde2ea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text: #f1f1f1;
+        --grau: #aaa;
+        --hintergrund: #121417;
+        --karte: #1e2227;
+        --rand: #333a44;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--hintergrund);
+      color: var(--text);
+      font-size: 18px;
+      line-height: 1.4;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    }
+    main { max-width: 520px; margin: 0 auto; }
+    h1 { font-size: 26px; margin: 4px 0 16px; }
+    .versteckt { display: none !important; }
+
+    button, .knopf {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 16px;
+      padding: 22px 16px;
+      margin: 0 0 14px;
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--blau);
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:active, .knopf:active { transform: scale(0.98); }
+    button.gross { padding: 34px 16px; font-size: 26px; }
+    button.gruen { background: var(--gruen); }
+    button.rot { background: var(--rot); }
+    button.leise {
+      background: transparent;
+      color: var(--blau);
+      border: 2px solid var(--blau);
+      font-size: 18px;
+      padding: 14px;
+    }
+    button:disabled { opacity: 0.4; }
+
+    .info {
+      background: var(--karte);
+      border: 1px solid var(--rand);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 0 0 14px;
+    }
+    .klein { font-size: 15px; color: var(--grau); }
+
+    #vorschau { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    #vorschau img {
+      width: 72px; height: 96px; object-fit: cover;
+      border-radius: 8px; border: 1px solid var(--rand);
+    }
+
+    .balken { height: 18px; background: var(--rand); border-radius: 9px; overflow: hidden; margin: 10px 0; }
+    .balken > div { height: 100%; width: 0; background: var(--blau); transition: width 0.3s; }
+
+    ol#liste { padding-left: 0; list-style: none; margin: 0; }
+    ol#liste li { padding: 8px 0; border-bottom: 1px solid var(--rand); font-size: 16px; }
+    ol#liste li:last-child { border-bottom: 0; }
+    ol#liste li.erledigt { color: var(--grau); text-decoration: line-through; }
+    ol#liste li b { display: inline-block; min-width: 2.2em; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🚚 Tour</h1>
+
+  <!-- Bildschirm 1: Fotos machen -->
+  <section id="seite-fotos">
+    <input id="kamera" type="file" accept="image/*" capture="environment" class="versteckt">
+    <button id="knopf-foto" class="gross">📷 Foto machen</button>
+    <div id="vorschau"></div>
+    <p id="foto-zahl" class="klein">Alle Seiten der Tourenübersicht nacheinander fotografieren. Dann „Fertig“ drücken.</p>
+    <button id="knopf-fertig" class="gruen" disabled>✅ Fertig</button>
+  </section>
+
+  <!-- Bildschirm 2: Texterkennung läuft -->
+  <section id="seite-lesen" class="versteckt">
+    <div class="info">
+      <div id="lese-text">Lese Fotos …</div>
+      <div class="balken"><div id="lese-balken"></div></div>
+      <div class="klein">Beim allerersten Mal dauert es länger, weil die Texterkennung geladen wird (einmalig ca. 15 MB, am besten im WLAN).</div>
+    </div>
+  </section>
+
+  <!-- Bildschirm 3: Tour läuft -->
+  <section id="seite-tour" class="versteckt">
+    <button id="knopf-naechste" class="gross gruen">▶️ Nächste 10 Kunden</button>
+    <p id="tour-stand" class="klein"></p>
+    <button id="knopf-nochmal" class="leise">🔁 Letzte Route nochmal öffnen</button>
+    <div class="info">
+      <ol id="liste"></ol>
+    </div>
+    <button id="knopf-neu" class="rot">🗑️ Neue Tour</button>
+  </section>
+
+  <p id="fehler" class="info versteckt" style="color: var(--rot)"></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
