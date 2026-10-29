@@ -2,7 +2,7 @@
 // Alles läuft im Handy-Browser. Es gibt keinen Server.
 
 // Bei jeder Änderung um eins erhöhen (Verlauf steht in ANLEITUNG.md)
-const VERSION = '1.6';
+const VERSION = '1.7';
 
 const PRO_ROUTE = 10;            // So viele Kunden schickt die App auf einmal an Google Maps
 const SPEICHER_NAME = 'tour-v1'; // Unter diesem Namen merkt sich das Handy die Tour
@@ -245,7 +245,7 @@ function tourAnzeigen(tour) {
   const loeschen = new Date(loeschZeitpunkt(tour)).toLocaleString('de-AT', {
     weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
   });
-  $('loesch-info').textContent = `🔒 Die Kundenadressen werden automatisch gelöscht: ${loeschen} Uhr`;
+  $('loesch-info').textContent = `🔒 Die Kundendaten werden automatisch gelöscht: ${loeschen} Uhr`;
 
   karteAnzeigen(tour);
 
@@ -258,8 +258,15 @@ function tourAnzeigen(tour) {
     const text = document.createElement('div');
     text.className = 'kunde-text';
     const nr = document.createElement('b');
+    nr.className = 'pos';
     nr.textContent = k.pos !== null ? k.pos + '.' : '?';
-    text.append(nr, ' ' + k.adresse.replace(', Österreich', ''), k.gemerkt ? ' 🧠' : '', ' ✏️');
+    text.append(nr, ' ');
+    if (k.name) {
+      const name = document.createElement('b');
+      name.textContent = k.name;
+      text.append(name, document.createElement('br'));
+    }
+    text.append(k.adresse.replace(', Österreich', ''), k.gemerkt ? ' 🧠' : '', ' ✏️');
     if (k.angefahren) text.append(' ✔️');
     const warnung = warnText(k);
     if (warnung) {
@@ -509,16 +516,19 @@ async function zeileImFoto(si, y) {
     const gefunden = findeKunden(texte).sort((a, b) => abstand(a) - abstand(b))[0];
     const nr = gefunden ? gefunden.nr : texte.map(nummerFinden).find((n) => n) || null;
     const gemerkt = nachschlagen(nr);
+    // Name aus der Zeile mit Pos. und Kundennummer (falls kein ganzer Kunde gefunden wurde)
+    const name = gefunden ? gefunden.name
+      : texte.map((t) => (POS_NR.test(zeileBereinigen(t)) ? nameFinden(zeileBereinigen(t), null) : null)).find((n) => n) || null;
     if (gemerkt && (!gefunden || gefunden.unsicher || gefunden.hinweis)) {
       fenster.vorbelegen(gefunden ? gefunden.pos : texte.map(positionFinden).find((p) => p !== null) ?? null,
-        gemerkt.adresse, '🧠 Adresse aus dem Gedächtnis. Bitte kurz mit dem Ausschnitt vergleichen.', gemerkt.nr);
+        gemerkt.adresse, '🧠 Adresse aus dem Gedächtnis. Bitte kurz mit dem Ausschnitt vergleichen.', gemerkt.nr, name);
     } else if (gefunden) {
       fenster.vorbelegen(gefunden.pos, gefunden.adresse, gefunden.unsicher
         ? '⚠️ Die Straße ist nicht lesbar. Bitte aus dem Ausschnitt abtippen.'
-        : '✅ Gelesen. Bitte kurz mit dem Ausschnitt vergleichen.', gefunden.nr);
+        : '✅ Gelesen. Bitte kurz mit dem Ausschnitt vergleichen.', gefunden.nr, name);
     } else {
       const pos = texte.map(positionFinden).find((p) => p !== null) ?? null;
-      fenster.vorbelegen(pos, '', '✍️ Konnte nicht gelesen werden. Bitte aus dem Ausschnitt abtippen.', nr);
+      fenster.vorbelegen(pos, '', '✍️ Konnte nicht gelesen werden. Bitte aus dem Ausschnitt abtippen.', nr, name);
     }
   } catch (e) {
     fenster.vorbelegen(null, '', '✍️ Bitte aus dem Ausschnitt abtippen.');
@@ -531,6 +541,7 @@ async function zeileImFoto(si, y) {
   const neu = {
     pos: antwort.pos,
     nr: antwort.nr,
+    name: antwort.name,
     adresse: antwort.adresse,
     unsicher: false,
     quelle: { seite: si, box: { x0: seite.breite * 0.03, x1: seite.breite * 0.97, y0: y - h * 0.6, y1: y + h * 0.6 } },
@@ -559,6 +570,7 @@ function dialogOeffnen({ titel, bild, info, loeschen = false, ueberspringen = nu
     img.style.height = bild.anzeigeHoehe + 'px';
   }
   $('dialog-pos').value = '';
+  $('dialog-name').value = '';
   $('dialog-adresse').value = '';
   $('dialog-nr').value = '';
   $('dialog-nr-feld').classList.toggle('versteckt', !gedaechtnisLaden().an);
@@ -571,7 +583,9 @@ function dialogOeffnen({ titel, bild, info, loeschen = false, ueberspringen = nu
 
   let offen = true;
   let selbstGetippt = false;
-  $('dialog-pos').oninput = $('dialog-adresse').oninput = $('dialog-nr').oninput = () => { selbstGetippt = true; };
+  $('dialog-pos').oninput = $('dialog-name').oninput = $('dialog-adresse').oninput = $('dialog-nr').oninput = () => {
+    selbstGetippt = true;
+  };
 
   const ergebnis = new Promise((fertig) => {
     const schliessen = (aktion) => {
@@ -586,6 +600,7 @@ function dialogOeffnen({ titel, bild, info, loeschen = false, ueberspringen = nu
       $('dialog').classList.add('versteckt');
       fertig({
         aktion,
+        name: $('dialog-name').value.trim() || null,
         pos: /^\d{1,3}$/.test(posText) ? Number(posText) : null,
         nr: /^\d{5}$/.test(nrText) ? nrText : null,
         adresse: /österreich/i.test(adresseText) ? adresseText : adresseText + ', Österreich',
@@ -600,10 +615,11 @@ function dialogOeffnen({ titel, bild, info, loeschen = false, ueberspringen = nu
   return {
     ergebnis,
     // Felder ausfüllen, aber nur, wenn man noch nicht selbst etwas getippt hat
-    vorbelegen(pos, adresse, text, nr) {
+    vorbelegen(pos, adresse, text, nr, name) {
       if (!offen) return;
       if (!selbstGetippt) {
         $('dialog-pos').value = pos ?? '';
+        $('dialog-name').value = name || '';
         $('dialog-adresse').value = (adresse || '').replace(', Österreich', '');
         $('dialog-nr').value = nr && /^\d{5}$/.test(nr) ? nr : '';
       }
@@ -670,7 +686,7 @@ async function kundeBearbeiten(nummer) {
     loeschen: true,
     ueberspringen: !!kunde.uebersprungen,
   });
-  fenster.vorbelegen(kunde.pos, kunde.adresse, null, kunde.nr);
+  fenster.vorbelegen(kunde.pos, kunde.adresse, null, kunde.nr, kunde.name);
   const antwort = await fenster.ergebnis;
   if (ausschnitt) ausschnitt.freigeben();
 
@@ -682,7 +698,8 @@ async function kundeBearbeiten(nummer) {
     kunde.uebersprungen = !kunde.uebersprungen;
   } else if (antwort.aktion === 'speichern') {
     const geaendert = {
-      ...kunde, pos: antwort.pos, nr: antwort.nr || kunde.nr, adresse: antwort.adresse, unsicher: false, hinweis: null,
+      ...kunde, pos: antwort.pos, nr: antwort.nr || kunde.nr, name: antwort.name, adresse: antwort.adresse,
+      unsicher: false, hinweis: null,
     };
     if (antwort.adresse !== kunde.adresse) geaendert.gemerkt = false;
     if (antwort.pos !== kunde.pos && nummer >= tour.naechste) {
@@ -715,7 +732,7 @@ async function kundeHinzufuegen() {
   const antwort = await fenster.ergebnis;
   if (antwort.aktion !== 'speichern') return;
 
-  const neu = { pos: antwort.pos, nr: antwort.nr, adresse: antwort.adresse, unsicher: false };
+  const neu = { pos: antwort.pos, nr: antwort.nr, name: antwort.name, adresse: antwort.adresse, unsicher: false };
   const hinweis = kundeEinfuegen(tour, neu);
   tourSpeichern(tour);
   merken([neu]);
@@ -963,7 +980,10 @@ async function fotosLesen() {
       const gemerkt = nachschlagen(nummerFinden(z.text));
       const schonDa = kunden.some((k) => (pos !== null && k.pos === pos) || (gemerkt && k.nr === gemerkt.nr));
       if (gemerkt && !schonDa) {
-        nachtraeglich.push({ pos, nr: gemerkt.nr, adresse: gemerkt.adresse, unsicher: false, gemerkt: true, quelle: { seite: z.seite, box: z.box } });
+        nachtraeglich.push({
+          pos, nr: gemerkt.nr, name: nameFinden(zeileBereinigen(z.text), null), adresse: gemerkt.adresse,
+          unsicher: false, gemerkt: true, quelle: { seite: z.seite, box: z.box },
+        });
       } else if (!schonDa) {
         fehlend.push({ seite: z.seite, box: z.box });
       }
@@ -1151,6 +1171,22 @@ function positionFinden(text) {
   return treffer ? Number(treffer[1]) : null;
 }
 
+// Kundenname: steht zwischen Kundennummer und Straße, z. B. "3 10708 Billa-Herzogenburg St. Pöltnerstraße 48-52"
+function nameFinden(text, strasse) {
+  const pn = text.match(POS_NR);
+  if (!pn) return null;
+  let rest = text.slice(pn.index + pn[0].length);
+  if (strasse) {
+    const anfang = rest.lastIndexOf(strasse.split(' ')[0]);
+    if (anfang > 0) rest = rest.slice(0, anfang);
+  }
+  // Abgekürzte Namen enden mit ".." – was danach kommt, gehört nicht mehr zum Namen
+  const punkte = rest.lastIndexOf('..');
+  if (punkte > 0) rest = rest.slice(0, punkte + 2);
+  rest = rest.replace(/[\s,;:|\-–]+$/, '').trim();
+  return /[A-Za-zÄÖÜäöü]{2}/.test(rest) ? rest : null;
+}
+
 // Kundennummer in der Zeile suchen. Ist die erste Stelle keine Ziffer, wird sie zu "?".
 function nummerFinden(text) {
   const treffer = zeileBereinigen(text).match(POS_NR);
@@ -1187,9 +1223,12 @@ function findeKunden(zeilen, benutzt = new Set()) {
     // Pos. und Kundennummer stehen in derselben Zeile oder (wenn umgebrochen) eine Zeile darüber
     let pos = positionFinden(davor);
     let nr = nummerFinden(davor);
+    let name = pos !== null ? nameFinden(davor, strasse) : null;
     if (pos === null && vorige) {
       pos = positionFinden(vorige);
       nr = nummerFinden(vorige);
+      // Steht die Straße in der anderen Zeile, gehört der ganze Rest dieser Zeile zum Namen
+      name = nameFinden(vorige, strasseFinden(vorige) === strasse ? strasse : null);
       if (pos !== null) vorigeBenutzt = true;
     }
 
@@ -1207,6 +1246,7 @@ function findeKunden(zeilen, benutzt = new Set()) {
     gefunden.push({
       pos,
       nr,
+      name,
       adresse: strasse ? `${strasse}, ${ortText}, Österreich` : `${ortText}, Österreich`,
       unsicher: !strasse,
       hinweis: geprueft.ok ? null : 'PLZ und Ort passen nicht zusammen',
