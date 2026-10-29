@@ -30,6 +30,20 @@
 
 ---
 
+## Versionen
+
+Die aktuelle Versionsnummer steht in der App über dem Knopf „📷 Foto machen“.
+
+| Version | Was neu ist |
+|---|---|
+| 1.0 | Erste Version: Fotos lesen, Adressen nach Pos. sortieren, je 10 Kunden in Google Maps öffnen |
+| 1.1 | Adressen in der Liste antippen und von Hand ändern oder löschen |
+| 1.2 | Knopf „➕ Fehlenden Kunden hinzufügen“ |
+| 1.3 | Datenschutz: Texterkennung ohne fremden Server, Sperre gegen fremde Verbindungen, Tour wird automatisch gelöscht |
+| 1.4 | Prüf-Bildschirm: Zeilen im Foto farbig markiert, nicht erkannte Kunden direkt im Foto antippen und nachtragen |
+
+---
+
 ## Was in den Dateien steht
 
 | Datei | Wofür |
