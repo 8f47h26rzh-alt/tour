@@ -26,6 +26,7 @@
 - Die **Fotos bleiben auf dem Handy**. Die Texterkennung läuft direkt im Handy.
 - Die App spricht mit **keinem fremden Server**. Alles, auch die Texterkennung, kommt von der eigenen Adresse. Eine eingebaute Sperre verhindert, dass Daten woanders hingeschickt werden.
 - Nur beim Routenstart, bei der Navigation und für die Karte gehen **Straße, PLZ und Ort** an Google. Namen und Telefonnummern werden nicht mitgeschickt.
+- Die **Kundennamen** werden nur in der Tour auf dem Handy gespeichert, damit sie in der Liste stehen. Sie werden mit der Tour automatisch gelöscht und kommen nicht ins Stammkunden-Gedächtnis.
 - Die Tour wird **automatisch gelöscht**: spätestens 36 Stunden nach dem Fotografieren, oder 6 Stunden nachdem die letzte Route geöffnet wurde. Den genauen Zeitpunkt zeigt die App unten an.
 - **🧠 Stammkunden merken** ist ausgeschaltet, bis man es einschaltet. Dann merkt sich das Handy zu jeder Kundennummer die geprüfte Adresse, ohne Namen und ohne Telefonnummern. Diese Liste wird nicht mit der Tour gelöscht, sondern erst, wenn ein Kunde 90 Tage nicht vorkommt, oder per Knopf „Gedächtnis löschen“.
 
@@ -53,6 +54,7 @@ Die aktuelle Versionsnummer steht in der App über dem Knopf „📷 Foto machen
 | 1.4 | Prüf-Bildschirm: Zeilen im Foto farbig markiert, nicht erkannte Kunden direkt im Foto antippen und nachtragen |
 | 1.5 | PLZ-Verzeichnis (korrigiert Ortsnamen und PLZ-Lesefehler), Stammkunden-Gedächtnis (zum Einschalten), Kunden überspringen, Warnung bei unscharfen oder dunklen Fotos |
 | 1.6 | Karte mit der Route zum Prüfen der Reihenfolge (je 10 Kunden), 🧭-Knopf neben jedem Kunden für die Navigation zu genau diesem Kunden |
+| 1.7 | Kundenname wird mitgelesen und in der Liste angezeigt; im Bearbeiten-Fenster änderbar |
 
 ---
 
