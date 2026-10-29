@@ -6,11 +6,20 @@
 2. **✅ Fertig**: Das Handy liest die Fotos. Ein Balken zeigt dabei den Fortschritt. Ihr müsst ungefähr 20–60 Sekunden warten.
 3. Die App sucht nur die Adressen heraus (Straße, PLZ, Ort) und sortiert sie nach „Pos.“.
    Telefonnummern, Lieferzeiten und Hinweise werden ignoriert.
-4. **▶️ Route starten**: Google Maps öffnet sich mit den ersten 10 Kunden in der richtigen Reihenfolge.
+4. **Bitte kurz prüfen**: Die Fotos werden mit farbigen Markierungen angezeigt:
+   - 🟩 grün = erkannt
+   - 🟧 orange = Straße unklar → antippen und ergänzen
+   - 🟥 rot = Kundenzeile gesehen, aber Adresse nicht lesbar → antippen
+   - keine Farbe = übersehen → einfach auf die Zeile im Foto tippen
+
+   Beim Antippen erscheint ein vergrößerter Ausschnitt der Zeile. Die App liest ihn nochmal genauer
+   und füllt Pos. und Adresse vor, soweit möglich. Dann **💾 Speichern** und am Ende **✅ Passt – weiter**.
+   Die Fotos bleiben nur so lange im Handy, bis die App geschlossen wird. Sie werden nie gespeichert.
+5. **▶️ Route starten**: Google Maps öffnet sich mit den ersten 10 Kunden in der richtigen Reihenfolge.
    Start ist immer der aktuelle Standort.
-5. Später die App wieder öffnen, dann **▶️ Nächste 10 Kunden** drücken. Das geht so lange, bis alle erledigt sind.
-6. **🔁 Letzte Route nochmal öffnen**: Falls Google Maps aus Versehen geschlossen wurde.
-7. **🗑️ Neue Tour**: Löscht alles für den nächsten Tag.
+6. Später die App wieder öffnen, dann **▶️ Nächste 10 Kunden** drücken. Das geht so lange, bis alle erledigt sind.
+7. **🔁 Letzte Route nochmal öffnen**: Falls Google Maps aus Versehen geschlossen wurde.
+8. **🗑️ Neue Tour**: Löscht alles für den nächsten Tag.
 
 ## Datenschutz
 
