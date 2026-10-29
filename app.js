@@ -73,14 +73,49 @@ function tourAnzeigen(tour) {
     const li = document.createElement('li');
     const nr = document.createElement('b');
     nr.textContent = k.pos !== null ? k.pos + '.' : '?';
-    li.append(nr, ' ' + k.adresse.replace(', Österreich', ''));
-    if (k.unsicher) li.append(' ⚠️ Straße nicht lesbar');
+    li.append(nr, ' ' + k.adresse.replace(', Österreich', ''), ' ✏️');
+    if (k.unsicher) {
+      const hinweis = document.createElement('div');
+      hinweis.className = 'warnung';
+      hinweis.textContent = '⚠️ Straße nicht lesbar – antippen zum Ändern';
+      li.append(hinweis);
+    }
     if (i < aktuellerStart) li.classList.add('erledigt');
     if (tour.letzteRoute && i >= tour.letzteRoute[0] && i < tour.letzteRoute[1]) li.prepend('🚚 ');
+    li.addEventListener('click', () => adresseAendern(i));
     liste.append(li);
   });
 
   zeige('seite-tour');
+}
+
+// Adresse antippen -> von Hand ändern oder löschen
+function adresseAendern(nummer) {
+  const tour = tourLaden();
+  if (!tour) return;
+  const kunde = tour.kunden[nummer];
+  const neu = prompt(
+    'Adresse ändern (Straße Hausnummer, PLZ Ort).\nLeer lassen und OK drücken = Kunde löschen.',
+    kunde.adresse.replace(', Österreich', '')
+  );
+  if (neu === null) return; // "Abbrechen" gedrückt
+
+  const text = neu.trim();
+  if (text === '') {
+    if (!confirm('Diesen Kunden aus der Tour löschen?')) return;
+    tour.kunden.splice(nummer, 1);
+    // Die Zähler für erledigte Kunden rutschen mit, wenn davor etwas gelöscht wurde
+    if (nummer < tour.naechste) tour.naechste--;
+    if (tour.letzteRoute) {
+      if (nummer < tour.letzteRoute[0]) tour.letzteRoute[0]--;
+      if (nummer < tour.letzteRoute[1]) tour.letzteRoute[1]--;
+    }
+  } else {
+    kunde.adresse = /österreich/i.test(text) ? text : text + ', Österreich';
+    kunde.unsicher = false;
+  }
+  tourSpeichern(tour);
+  tourAnzeigen(tour);
 }
 
 
