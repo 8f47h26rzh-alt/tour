@@ -27,6 +27,13 @@
 - Die App spricht mit **keinem fremden Server**. Alles, auch die Texterkennung, kommt von der eigenen Adresse. Eine eingebaute Sperre verhindert, dass Daten woanders hingeschickt werden.
 - Nur beim Routenstart gehen **Straße, PLZ und Ort** an Google Maps. Namen und Telefonnummern werden nicht mitgeschickt.
 - Die Tour wird **automatisch gelöscht**: spätestens 36 Stunden nach dem Fotografieren, oder 6 Stunden nachdem die letzte Route geöffnet wurde. Den genauen Zeitpunkt zeigt die App unten an.
+- **🧠 Stammkunden merken** ist ausgeschaltet, bis man es einschaltet. Dann merkt sich das Handy zu jeder Kundennummer die geprüfte Adresse, ohne Namen und ohne Telefonnummern. Diese Liste wird nicht mit der Tour gelöscht, sondern erst, wenn ein Kunde 90 Tage nicht vorkommt, oder per Knopf „Gedächtnis löschen“.
+
+## Weitere Funktionen
+
+- **Postleitzahlen-Prüfung**: Die App kennt alle österreichischen PLZ mit ihren Ortschaften. Abgeschnittene oder falsch gelesene Ortsnamen werden korrigiert („Eggenb“ wird zu „Eggenburg“), ebenso eine falsch gelesene PLZ-Ziffer. Passen PLZ und Ort gar nicht zusammen, wird der Kunde orange markiert.
+- **Kunde überspringen**: Kunden in der Liste antippen und dann **⏭️ Diesmal überspringen** wählen. Der Kunde kommt nicht in die Google-Maps-Route. Mit **↩️ Doch anfahren** wird das wieder rückgängig gemacht.
+- **Foto-Prüfung**: Ist ein Foto verwackelt oder zu dunkel, wird es orange markiert. Antippen löscht es, danach einfach nochmal fotografieren.
 
 ---
 
@@ -41,6 +48,7 @@ Die aktuelle Versionsnummer steht in der App über dem Knopf „📷 Foto machen
 | 1.2 | Knopf „➕ Fehlenden Kunden hinzufügen“ |
 | 1.3 | Datenschutz: Texterkennung ohne fremden Server, Sperre gegen fremde Verbindungen, Tour wird automatisch gelöscht |
 | 1.4 | Prüf-Bildschirm: Zeilen im Foto farbig markiert, nicht erkannte Kunden direkt im Foto antippen und nachtragen |
+| 1.5 | PLZ-Verzeichnis (korrigiert Ortsnamen und PLZ-Lesefehler), Stammkunden-Gedächtnis (zum Einschalten), Kunden überspringen, Warnung bei unscharfen oder dunklen Fotos |
 
 ---
 
@@ -54,6 +62,7 @@ Die aktuelle Versionsnummer steht in der App über dem Knopf „📷 Foto machen
 | `sw.js` | Damit die App wie eine echte App vom Home-Bildschirm startet |
 | `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` | Das App-Symbol (blaue Kartennadel) |
 | `tesseract/` | Die Texterkennung (Tesseract.js 5.1.1) mit deutscher Sprache |
+| `plz-at.json` | Alle österreichischen Postleitzahlen mit Ortschaften. Quelle: [GeoNames](https://www.geonames.org), Lizenz [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 
 ---
 
